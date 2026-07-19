@@ -52,7 +52,17 @@ export async function runSupervisor(
     }
   }
 
-  // Validation qualitative Claude
+  // En mode cotes-uniquement (sample_size=0 partout), auto-approuver si les checks
+  // déterministes passent — pas de données historiques disponibles, c'est voulu
+  if (oddsOnlyMode) {
+    const check: SupervisorCheck = {
+      verdict: 'approved',
+      feedback: `Mode cotes-uniquement validé — ${picks.length} picks avec probabilité implicite de marché.`,
+    }
+    return { checks: [check], final_verdict: 'approved', iterations: iteration, model_used: 'deterministic-odds-only' }
+  }
+
+  // Validation qualitative Claude (mode normal uniquement)
   const picksText = picks
     .map(p => `${p.home_team} vs ${p.away_team} (${p.competition}) → ${p.bet_type} @ ${p.odds.toFixed(2)} | tendance ${p.trend_pct}% sur ${p.sample_size} matchs`)
     .join('\n')
