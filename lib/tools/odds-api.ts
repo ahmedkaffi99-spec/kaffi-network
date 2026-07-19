@@ -28,6 +28,9 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   url.searchParams.set('oddsFormat', 'decimal')
   url.searchParams.set('dateFormat', 'iso')
 
+  const key = process.env.ODDS_API_KEY ?? ''
+  console.log(`[odds-api] key length=${key.length} prefix=${key.slice(0, 6)}`)
+
   const res = await fetch(url.toString(), { cache: 'no-store' })
   if (!res.ok) {
     console.warn(`Odds API ${res.status} — continuing without real-time odds`)
