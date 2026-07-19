@@ -5,7 +5,7 @@ import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
 
 function loadFont(weight: 400 | 700): ArrayBuffer {
-  const file = weight === 700 ? 'inter-700.ttf' : 'inter-400.ttf'
+  const file = weight === 700 ? 'inter-700.woff' : 'inter-400.woff'
   const buf = readFileSync(join(process.cwd(), 'lib', 'assets', 'fonts', file))
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 }

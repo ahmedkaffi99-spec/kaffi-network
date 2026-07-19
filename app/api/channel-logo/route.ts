@@ -5,7 +5,7 @@ import satori from 'satori'
 import sharp from 'sharp'
 
 function loadFont(): ArrayBuffer {
-  const buf = readFileSync(join(process.cwd(), 'lib', 'assets', 'fonts', 'inter-700.ttf'))
+  const buf = readFileSync(join(process.cwd(), 'lib', 'assets', 'fonts', 'inter-700.woff'))
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 }
 
