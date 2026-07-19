@@ -10,24 +10,35 @@ const openrouter = createOpenAI({
   },
 })
 
-const PLANNER_MODELS = [
-  'google/gemma-4-26b-a4b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-]
-
+// Modèles primaires par rôle (voir spec utilisateur)
+// Analyst + Supervisor : NVIDIA Nemotron Ultra (1M ctx, rigueur max)
+// Planner             : NVIDIA Nemotron Super (léger, 540ms)
+// Writer              : Tencent Hy3 (262K ctx, fiable)
 const ANALYST_MODELS = [
-  'qwen/qwen3-next-80b-a3b-instruct:free',
-  'nousresearch/hermes-3-llama-3.1-405b:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-]
-
-const WRITER_MODELS = [
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  'tencent/hunyuan-a13b-instruct:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemma-4-26b-a4b-it:free',
 ]
 
 const SUPERVISOR_MODELS = [
-  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  'tencent/hunyuan-a13b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+]
+
+const PLANNER_MODELS = [
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
+  'tencent/hunyuan-a13b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+]
+
+const WRITER_MODELS = [
+  'tencent/hunyuan-a13b-instruct:free',
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
   'meta-llama/llama-3.3-70b-instruct:free',
 ]
 
@@ -36,6 +47,42 @@ export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
 interface RouterResult {
   text: string
   model_used: string
+}
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+async function tryModel(
+  model: string,
+  system: string,
+  userMessage: string,
+  maxTokens: number,
+  retries = 1
+): Promise<string | null> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const { text } = await generateText({
+        model: openrouter(model),
+        system,
+        prompt: userMessage,
+        maxOutputTokens: maxTokens,
+        abortSignal: AbortSignal.timeout(30000),
+      })
+      if (text?.trim()) {
+        console.log(`[model-router] ✅ ${model} — ${text.trim().length} chars`)
+        return text.trim()
+      }
+    } catch (err: unknown) {
+      const msg = String(err)
+      if (msg.includes('429') && attempt < retries) {
+        console.log(`[model-router] ⏳ 429 sur ${model}, retry dans 20s...`)
+        await sleep(20000)
+        continue
+      }
+      console.log(`[model-router] ❌ ${model} — ${msg.slice(0, 120)}`)
+      break
+    }
+  }
+  return null
 }
 
 export async function routeCompletion(
@@ -50,20 +97,13 @@ export async function routeCompletion(
     role === 'supervisor' ? SUPERVISOR_MODELS :
     ANALYST_MODELS
 
+  console.log(`[model-router] 🚀 role=${role} — essai de ${models.length} modèles`)
+
   for (const model of models) {
-    try {
-      const { text } = await generateText({
-        model: openrouter(model),
-        system,
-        prompt: userMessage,
-        maxOutputTokens: maxTokens,
-        abortSignal: AbortSignal.timeout(25000),
-      })
-      if (text?.trim()) return { text: text.trim(), model_used: model }
-    } catch {
-      // modèle indisponible, on essaie le suivant
-    }
+    const text = await tryModel(model, system, userMessage, maxTokens)
+    if (text) return { text, model_used: model }
   }
 
+  console.log(`[model-router] ⚠️ tous les modèles ont échoué pour role=${role}`)
   return { text: '', model_used: 'unavailable' }
 }

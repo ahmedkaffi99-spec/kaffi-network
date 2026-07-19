@@ -136,7 +136,20 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
 
     if (picksError) throw new Error(`Erreur insertion picks : ${picksError.message}`)
 
-    // ── Étape 7 : Image ticket + envoi Telegram ───────────────────────────────
+    // ── Étape 7 : Scanner anti-arnaque avant publication ─────────────────────
+    const FORBIDDEN = ['garanti', 'garantine', 'sûr à 100', '100% sûr', 'certain à 100', 'infaillible', 'sans risque', 'gagné d\'avance', 'coup sûr']
+    const writerLower = writerOutput.toLowerCase()
+    const forbidden = FORBIDDEN.filter(w => writerLower.includes(w.toLowerCase()))
+    if (forbidden.length > 0) {
+      console.warn(`[orchestrator] 🚫 Mots interdits détectés dans le post : ${forbidden.join(', ')}`)
+      await adminSupabase
+        .from('pronostic_sessions')
+        .update({ status: 'rejected', notes: `Post bloqué — mots interdits : ${forbidden.join(', ')}` })
+        .eq('id', sessionId)
+      return { success: false, sessionId, message: `Post bloqué — mots interdits détectés : ${forbidden.join(', ')}` }
+    }
+
+    // ── Étape 8 : Image ticket + envoi Telegram ───────────────────────────────
     const imageBuffer = await generateTicketImage(picks, combinedOdds, targetDate)
     const caption = formatCombinePost(picks, combinedOdds)
     const telegramMsgId = await sendPhoto(imageBuffer, caption)

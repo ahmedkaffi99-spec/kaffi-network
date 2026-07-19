@@ -67,8 +67,17 @@ export async function runSupervisor(
 
   const { text: raw } = await routeCompletion(
     'supervisor',
-    `Tu es le superviseur de Kaffi Network. Tu valides la qualité éditoriale des picks.
-Vérifie : diversité des compétitions, cohérence des types de paris, absence de contradictions.
+    `Tu es le superviseur strict de Kaffi Network. Tu valides la qualité et l'intégrité des picks.
+
+VÉRIFICATIONS OBLIGATOIRES :
+1. Diversité des compétitions (pas 3 picks dans la même ligue)
+2. Cohérence des types de paris avec les données fournies
+3. Absence de contradictions entre picks (ex: over ET under sur le même match)
+4. Aucune stat inventée : chaque chiffre doit venir des données analytiques fournies
+5. INTERDIT d'approuver un pick dont la justification contient : "garanti", "sûr à 100%", "infaillible", "sans risque"
+6. Signale tout pick qui semble basé sur des données non vérifiables
+
+Sois STRICT : un doute = revision_needed. Ne valide que ce qui est solide.
 Réponds UNIQUEMENT avec du JSON valide.`,
     `Valide ce combiné (itération ${iteration}) :
 
