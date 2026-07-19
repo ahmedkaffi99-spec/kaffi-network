@@ -1,7 +1,7 @@
 const BASE_URL = 'https://api.football-data.org/v4'
 
 // Championnats européens + Amérique du Sud + Coupes mondiales
-const COMPETITIONS = ['PL', 'BL1', 'SA', 'PD', 'FL1', 'CL', 'EL', 'ELC', 'PPL', 'DED', 'BSA', 'CLI', 'WC']
+const COMPETITIONS = ['PL', 'BL1', 'SA', 'PD', 'FL1', 'CL', 'EL', 'ELC', 'PPL', 'DED', 'BSA', 'CLI', 'WC', 'MLS', 'MX1']
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -58,7 +58,7 @@ export async function getTodayMatches(): Promise<TodayMatch[]> {
     `/matches?dateFrom=${today}&dateTo=${today}&competitions=${COMPETITIONS.join(',')}`
   )
   return data.matches
-    .filter(m => m.status === 'SCHEDULED' || m.status === 'TIMED')
+    .filter(m => ['SCHEDULED', 'TIMED', 'IN_PLAY', 'LIVE', 'PAUSED'].includes(m.status))
     .map(m => ({
       id: m.id,
       competition: m.competition.name,
