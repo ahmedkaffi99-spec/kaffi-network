@@ -21,6 +21,13 @@ export interface OrchestratorResult {
 export async function runPipeline(date?: string): Promise<OrchestratorResult> {
   const targetDate = date ?? new Date().toISOString().split('T')[0]
 
+  // Supprimer les sessions draft/rejected du jour avant d'en créer une nouvelle
+  await adminSupabase
+    .from('pronostic_sessions')
+    .delete()
+    .eq('date', targetDate)
+    .in('status', ['draft', 'rejected'])
+
   const { data: session, error: sessionError } = await adminSupabase
     .from('pronostic_sessions')
     .insert({ date: targetDate, status: 'draft', iterations: 0 })
