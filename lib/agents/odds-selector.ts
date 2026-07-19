@@ -17,12 +17,16 @@ const MISSION: AgentMission = {
 }
 
 const MAX_BOOKMAKER_SPREAD = 0.20
-// Chaque combiné (coupon) contient entre 8 et 15 matchs — pas une plage de
-// cote. Les 3 paliers piochent dans le même pool de picks fiables mais
+// Chaque combiné (coupon) contient entre MIN et MAX matchs — pas une plage
+// de cote. Les 3 paliers piochent dans le même pool de picks fiables mais
 // selon des critères de risque différents (cote par match, pas cote
 // combinée) : prudent = cotes les plus basses, audacieux = cotes les plus
 // hautes, équilibré = mélange des deux extrémités.
-export const MIN_PICKS_PER_COMBO = 8
+// Minimum volontairement bas (2, un vrai combiné minimal) — le canal est
+// encore neuf, on privilégie la publication régulière à un volume élevé de
+// picks par combiné. À remonter (ex: 8) une fois plus de matchs/jour
+// disponibles (API-Football actif) pour des combinés plus étoffés.
+export const MIN_PICKS_PER_COMBO = 2
 export const MAX_PICKS_PER_COMBO = 15
 
 function median(values: number[]): number {
