@@ -39,13 +39,9 @@ export async function runAnalyst(
 
   const memoryContext = formatMemoryContext(performance)
 
-  const relevantMatches = matches.filter((m: TodayMatch) =>
-    plannerOutput.competitions.some(c =>
-      m.competition.toLowerCase().includes(c.toLowerCase().split(' ')[0])
-    )
-  ).slice(0, 15)
-
-  const analysisData = await buildMatchAnalysisData(relevantMatches)
+  // Pas de filtre par compétition — buildMatchAnalysisData prend tous les matchs
+  // et s'arrête selon le quota API disponible (max 8 matchs analysés par run)
+  const analysisData = await buildMatchAnalysisData(matches)
 
   const enriched: string[] = []
 
@@ -80,7 +76,8 @@ export async function runAnalyst(
 
     if (!oddsLines.length) continue
 
-    // Actualités blessures/suspensions (en parallèle pour les deux équipes)
+    // Serper = contexte qualitatif UNIQUEMENT (blessures, suspensions, forfaits)
+    // Ne fournit JAMAIS de statistiques — seul API-Football est source chiffrée
     const [homeNews, awayNews] = await Promise.all([
       checkTeamNews(match.home_team.name),
       checkTeamNews(match.away_team.name),
@@ -105,8 +102,12 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${oddsLines.join(', ')}`)
 
   const systemPrompt = `Tu es l'analyste expert de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
 
+SOURCES DE DONNÉES — règle impérative :
+- API-Football (champs "Domicile/Extérieur" avec %) : SEULE source autorisée pour les statistiques chiffrées, tendances, résultats de matchs.
+- Actualités Serper (champ "Actualités") : contexte QUALITATIF uniquement — blessures, suspensions, forfaits. Ne jamais utiliser un chiffre issu des actualités comme preuve statistique.
+
 RÈGLES ABSOLUES — tout pick qui ne respecte pas ces critères DOIT être rejeté sans exception :
-1. Tendance ≥ ${MIN_TREND_PCT}% calculée sur ≥ ${MIN_SAMPLE} matchs récents
+1. Tendance ≥ ${MIN_TREND_PCT}% calculée sur ≥ ${MIN_SAMPLE} matchs récents (données API-Football uniquement)
 2. Cote entre ${MIN_ODDS} et ${MAX_ODDS} inclus
 3. Maximum ${MAX_PICKS} picks retenus dans picks_retenus
 4. Si les actualités signalent une blessure clé ou suspension de titulaire, rejeter le pick concerné
