@@ -52,20 +52,57 @@ export interface MatchAnalysisData {
 
 // ─── Fonctions ────────────────────────────────────────────────────────────────
 
+// Compétitions tournoi qui nécessitent un endpoint dédié (pas retournées par /matches général)
+const TOURNAMENT_COMPETITIONS = ['WC', 'CLI', 'EC']
+
+const ACTIVE_STATUSES = ['SCHEDULED', 'TIMED', 'IN_PLAY', 'LIVE', 'PAUSED']
+
+function mapMatch(m: ApiMatch): TodayMatch {
+  return {
+    id: m.id,
+    competition: m.competition.name,
+    home_team: { id: m.homeTeam.id, name: m.homeTeam.name },
+    away_team: { id: m.awayTeam.id, name: m.awayTeam.name },
+    datetime: m.utcDate,
+  }
+}
+
 export async function getTodayMatches(): Promise<TodayMatch[]> {
   const today = new Date().toISOString().split('T')[0]
-  const data = await apiRequest<ApiMatchesResponse>(
-    `/matches?dateFrom=${today}&dateTo=${today}&competitions=${COMPETITIONS.join(',')}`
+
+  // Endpoint général pour les ligues
+  const leagueCodes = COMPETITIONS.filter(c => !TOURNAMENT_COMPETITIONS.includes(c))
+  const generalData = await apiRequest<ApiMatchesResponse>(
+    `/matches?dateFrom=${today}&dateTo=${today}&competitions=${leagueCodes.join(',')}`
   )
-  return data.matches
-    .filter(m => ['SCHEDULED', 'TIMED', 'IN_PLAY', 'LIVE', 'PAUSED'].includes(m.status))
-    .map(m => ({
-      id: m.id,
-      competition: m.competition.name,
-      home_team: { id: m.homeTeam.id, name: m.homeTeam.name },
-      away_team: { id: m.awayTeam.id, name: m.awayTeam.name },
-      datetime: m.utcDate,
-    }))
+  const generalMatches = generalData.matches
+    .filter(m => ACTIVE_STATUSES.includes(m.status))
+    .map(mapMatch)
+
+  // Endpoints dédiés pour les tournois (WC, Copa Libertadores, etc.)
+  const tournamentMatches: TodayMatch[] = []
+  for (const code of TOURNAMENT_COMPETITIONS) {
+    try {
+      await sleep(1000)
+      const data = await apiRequest<ApiMatchesResponse>(
+        `/competitions/${code}/matches?dateFrom=${today}&dateTo=${today}`
+      )
+      const filtered = data.matches
+        .filter(m => ACTIVE_STATUSES.includes(m.status))
+        .map(mapMatch)
+      tournamentMatches.push(...filtered)
+    } catch {
+      // compétition non disponible sur ce plan, on continue
+    }
+  }
+
+  // Dédoublonnage par id
+  const seen = new Set<number>()
+  const all: TodayMatch[] = []
+  for (const m of [...generalMatches, ...tournamentMatches]) {
+    if (!seen.has(m.id)) { seen.add(m.id); all.push(m) }
+  }
+  return all
 }
 
 async function getTeamHistory(teamId: number, limit = 15): Promise<TeamMatchResult[]> {
