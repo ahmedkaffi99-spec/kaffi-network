@@ -1,17 +1,13 @@
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import satori from 'satori'
 import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
 
-// Charge Inter en TTF (Satori ne supporte pas woff2 sur ce runtime)
-async function loadFont(): Promise<ArrayBuffer> {
-  // Demande le CSS avec un ancien User-Agent pour forcer le format TTF
-  const css = await fetch('https://fonts.googleapis.com/css2?family=Inter:wght@400', {
-    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)' },
-  }).then(r => r.text())
-
-  const match = css.match(/url\(([^)]+\.ttf)\)/)
-  const ttfUrl = match?.[1] ?? 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfMZg.ttf'
-  return fetch(ttfUrl).then(r => r.arrayBuffer())
+function loadFont(weight: 400 | 700): ArrayBuffer {
+  const file = weight === 700 ? 'inter-700.ttf' : 'inter-400.ttf'
+  const buf = readFileSync(join(process.cwd(), 'lib', 'assets', 'fonts', file))
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 }
 
 export async function generateTicketImage(
@@ -19,7 +15,8 @@ export async function generateTicketImage(
   combinedOdds: number,
   date: string
 ): Promise<Buffer> {
-  const fontData = await loadFont()
+  const fontData = loadFont(400)
+  const fontDataBold = loadFont(700)
   const formattedDate = new Date(date).toLocaleDateString('fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
@@ -150,7 +147,10 @@ export async function generateTicketImage(
     {
       width: 600,
       height: totalHeight,
-      fonts: [{ name: 'Inter', data: fontData, weight: 400 as const, style: 'normal' as const }],
+      fonts: [
+        { name: 'Inter', data: fontData, weight: 400 as const, style: 'normal' as const },
+        { name: 'Inter', data: fontDataBold, weight: 700 as const, style: 'normal' as const },
+      ],
     }
   )
 

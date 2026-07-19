@@ -1,18 +1,16 @@
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { NextResponse } from 'next/server'
 import satori from 'satori'
 import sharp from 'sharp'
 
-async function loadFont(): Promise<ArrayBuffer> {
-  const css = await fetch('https://fonts.googleapis.com/css2?family=Inter:wght@700', {
-    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)' },
-  }).then(r => r.text())
-  const match = css.match(/url\(([^)]+\.ttf)\)/)
-  const ttfUrl = match?.[1] ?? 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfMZg.ttf'
-  return fetch(ttfUrl).then(r => r.arrayBuffer())
+function loadFont(): ArrayBuffer {
+  const buf = readFileSync(join(process.cwd(), 'lib', 'assets', 'fonts', 'inter-700.ttf'))
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
 }
 
 export async function GET() {
-  const fontData = await loadFont()
+  const fontData = loadFont()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const svg = await (satori as any)(
