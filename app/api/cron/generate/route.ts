@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runPipeline } from '@/lib/orchestrator'
+import { isAuthorizedCronRequest } from '@/lib/tools/cron-auth'
 
 export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get('authorization')?.replace('Bearer ', '')
-  if (secret !== process.env.CRON_SECRET) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
