@@ -10,36 +10,40 @@ const openrouter = createOpenAI({
   },
 })
 
-// Modèles primaires par rôle (voir spec utilisateur)
-// Analyst + Supervisor : NVIDIA Nemotron Ultra (1M ctx, rigueur max)
-// Planner             : NVIDIA Nemotron Super (léger, 540ms)
-// Writer              : Tencent Hy3 (262K ctx, fiable)
+// Rôles → modèles primaires souhaités + fallbacks gratuits vérifiés
+// Analyst + Supervisor : NVIDIA Nemotron Ultra (grand contexte, rigueur)
+// Planner             : NVIDIA Nemotron Super (léger)
+// Writer              : Tencent Hunyuan (262K ctx)
 const ANALYST_MODELS = [
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
-  'tencent/hunyuan-a13b-instruct:free',
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra 1M (primaire)
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super (fallback)
+  'qwen/qwen-2.5-72b-instruct:free',
   'meta-llama/llama-3.3-70b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
 ]
 
 const SUPERVISOR_MODELS = [
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
-  'tencent/hunyuan-a13b-instruct:free',
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra 1M (primaire)
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super (fallback)
+  'qwen/qwen-2.5-72b-instruct:free',
   'meta-llama/llama-3.3-70b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
 ]
 
 const PLANNER_MODELS = [
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
-  'tencent/hunyuan-a13b-instruct:free',
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super ~540ms (primaire)
+  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra (fallback)
   'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen-2.5-72b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
 ]
 
 const WRITER_MODELS = [
-  'tencent/hunyuan-a13b-instruct:free',
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  'tencent/hunyuan-a13b-instruct:free',             // Tencent Hy3 262K (primaire)
+  'qwen/qwen-2.5-72b-instruct:free',
   'meta-llama/llama-3.3-70b-instruct:free',
+  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  'mistralai/mistral-7b-instruct:free',
 ]
 
 export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
@@ -65,7 +69,7 @@ async function tryModel(
         system,
         prompt: userMessage,
         maxOutputTokens: maxTokens,
-        abortSignal: AbortSignal.timeout(30000),
+        abortSignal: AbortSignal.timeout(45000),
       })
       if (text?.trim()) {
         console.log(`[model-router] ✅ ${model} — ${text.trim().length} chars`)
@@ -78,7 +82,7 @@ async function tryModel(
         await sleep(20000)
         continue
       }
-      console.log(`[model-router] ❌ ${model} — ${msg.slice(0, 120)}`)
+      console.log(`[model-router] ❌ ${model} — ${msg.slice(0, 150)}`)
       break
     }
   }
