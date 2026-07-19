@@ -21,7 +21,6 @@ export interface OrchestratorResult {
 export async function runPipeline(date?: string): Promise<OrchestratorResult> {
   const targetDate = date ?? new Date().toISOString().split('T')[0]
 
-  // Crée la session en base
   const { data: session, error: sessionError } = await adminSupabase
     .from('pronostic_sessions')
     .insert({ date: targetDate, status: 'draft', iterations: 0 })
@@ -42,15 +41,23 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
       .update({ planner_output: plannerOutput })
       .eq('id', sessionId)
 
-    // ── Étape 2+3 : Analyst + Supervisor (max MAX_ITERATIONS) ────────────────
+    // ── Étape 2+3 : Analyst + Supervisor avec feedback itératif ──────────────
     let analystOutput = await runAnalyst(plannerOutput)
-    let supervisorNotes = await runSupervisor(analystOutput, 1)
+    let supervisorResult = await runSupervisor(analystOutput, 1)
     let iteration = 1
 
-    while (supervisorNotes.final_verdict === 'rejected' && iteration < MAX_ITERATIONS) {
+    while (supervisorResult.final_verdict === 'rejected' && iteration < MAX_ITERATIONS) {
       iteration++
-      analystOutput = await runAnalyst(plannerOutput)
-      supervisorNotes = await runSupervisor(analystOutput, iteration)
+      // Passe le feedback du superviseur à l'analyst pour qu'il corrige
+      analystOutput = await runAnalyst(plannerOutput, supervisorResult.feedback_for_analyst)
+      supervisorResult = await runSupervisor(analystOutput, iteration)
+    }
+
+    const supervisorNotes = {
+      checks: supervisorResult.checks,
+      final_verdict: supervisorResult.final_verdict,
+      iterations: supervisorResult.iterations,
+      model_used: supervisorResult.model_used,
     }
 
     await adminSupabase
@@ -58,10 +65,10 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
       .update({ analyst_output: analystOutput, supervisor_notes: supervisorNotes, iterations: iteration })
       .eq('id', sessionId)
 
-    if (supervisorNotes.final_verdict === 'rejected') {
+    if (supervisorResult.final_verdict === 'rejected') {
       await adminSupabase
         .from('pronostic_sessions')
-        .update({ status: 'rejected', notes: supervisorNotes.checks.at(-1)?.feedback })
+        .update({ status: 'rejected', notes: supervisorResult.checks.at(-1)?.feedback })
         .eq('id', sessionId)
       return { success: false, sessionId, message: 'Pipeline rejeté après supervision maximale.' }
     }
@@ -70,7 +77,7 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     if (!picks.length) {
       await adminSupabase
         .from('pronostic_sessions')
-        .update({ status: 'rejected', notes: 'Aucun pick retenu par l\'analyste.' })
+        .update({ status: 'rejected', notes: "Aucun pick retenu par l'analyste." })
         .eq('id', sessionId)
       return { success: false, sessionId, message: 'Aucun pick retenu.' }
     }

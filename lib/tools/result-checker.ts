@@ -7,13 +7,13 @@ interface PendingPick {
   session_id: string
   home_team: string
   away_team: string
+  competition: string
   match_datetime: string
   bet_type: string
   odds: number
   result: null
 }
 
-// Détermine si un pick est gagnant selon le résultat du match
 function evaluateResult(
   betType: string,
   homeGoals: number,
@@ -29,31 +29,31 @@ function evaluateResult(
   if (bt.includes('moins de 3.5') || bt.includes('under 3.5')) return total < 3.5 ? 'win' : 'loss'
   if (bt.includes('plus de 3.5') || bt.includes('over 3.5')) return total > 3.5 ? 'win' : 'loss'
 
-  if (bt.includes('btts oui') || bt.includes('les deux équipes marquent')) {
+  if (bt.includes('btts oui') || bt.includes('les deux équipes marquent'))
     return homeGoals > 0 && awayGoals > 0 ? 'win' : 'loss'
-  }
-  if (bt.includes('btts non')) {
+  if (bt.includes('btts non'))
     return homeGoals === 0 || awayGoals === 0 ? 'win' : 'loss'
-  }
 
   if (bt.includes('victoire') && bt.includes('domicile')) return homeGoals > awayGoals ? 'win' : 'loss'
   if (bt.includes('victoire') && bt.includes('extérieur')) return awayGoals > homeGoals ? 'win' : 'loss'
 
-  // Victoire X (équipe) — tente de matcher le nom de l'équipe dans le type de pari
-  if (bt.startsWith('victoire ')) return 'void' // ne peut pas déterminer sans le nom
+  // Victoire [nom équipe] — domicile si nommée, sinon void
+  if (bt.startsWith('victoire ')) {
+    const teamName = bt.replace('victoire ', '').trim()
+    if (teamName && homeGoals > awayGoals) return 'win'
+    if (teamName && awayGoals > homeGoals) return 'loss'
+  }
 
   return 'void'
 }
 
 export async function checkPendingResults(): Promise<{ checked: number; updated: number }> {
   const now = new Date()
-
-  // Récupère les picks sans résultat dont le match devrait être terminé (match_datetime + 2h)
   const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString()
 
   const { data: pending } = await adminSupabase
     .from('picks')
-    .select('id, session_id, home_team, away_team, match_datetime, bet_type, odds, result')
+    .select('id, session_id, home_team, away_team, competition, match_datetime, bet_type, odds, result')
     .is('result', null)
     .eq('was_rejected', false)
     .lt('match_datetime', cutoff)
@@ -66,7 +66,6 @@ export async function checkPendingResults(): Promise<{ checked: number; updated:
   for (const pick of pending as PendingPick[]) {
     const matchDate = pick.match_datetime.split('T')[0]
     const score = await getMatchResult(pick.home_team, pick.away_team, matchDate)
-
     if (!score) continue
 
     const result = evaluateResult(pick.bet_type, score.home, score.away)
@@ -76,18 +75,8 @@ export async function checkPendingResults(): Promise<{ checked: number; updated:
       .update({ result, result_checked_at: new Date().toISOString() })
       .eq('id', pick.id)
 
-    // Récupère la compétition pour la mémoire
-    const { data: session } = await adminSupabase
-      .from('pronostic_sessions')
-      .select('analyst_output')
-      .eq('id', pick.session_id)
-      .single()
-
-    const competition = (session?.analyst_output as { picks_retenus?: Array<{ competition?: string }> })
-      ?.picks_retenus?.find(
-        (p: { competition?: string; home_team?: string }) => p.home_team === pick.home_team
-      )?.competition ?? 'Unknown'
-
+    // Utilise la compétition directement depuis le pick (plus besoin de requête supplémentaire)
+    const competition = pick.competition || 'Unknown'
     await updatePerformance(pick.bet_type, competition, result, pick.odds)
     updated++
   }

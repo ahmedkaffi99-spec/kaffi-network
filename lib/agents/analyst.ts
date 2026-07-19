@@ -3,6 +3,7 @@ import type { PlannerOutput, AnalystOutput } from '@/lib/types'
 import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type TeamMatchResult } from '@/lib/tools/football-api'
 import { getTodayOdds, findMatchOdds } from '@/lib/tools/odds-api'
 import { getAllPerformance, formatMemoryContext } from '@/lib/tools/memory'
+import { checkTeamNews } from '@/lib/tools/serper'
 
 const MIN_TREND_PCT = 80
 const MIN_SAMPLE = 8
@@ -16,7 +17,20 @@ function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) =
   return { pct: Math.round((matching / history.length) * 100), count: history.length }
 }
 
-export async function runAnalyst(plannerOutput: PlannerOutput): Promise<AnalystOutput> {
+function extractJson(text: string): string {
+  // Cherche un bloc JSON valide n'importe où dans le texte
+  const fenceMatch = text.match(/```json?\s*([\s\S]*?)```/)
+  if (fenceMatch) return fenceMatch[1].trim()
+  const braceStart = text.indexOf('{')
+  const braceEnd = text.lastIndexOf('}')
+  if (braceStart !== -1 && braceEnd > braceStart) return text.slice(braceStart, braceEnd + 1)
+  return text.trim()
+}
+
+export async function runAnalyst(
+  plannerOutput: PlannerOutput,
+  supervisorFeedback?: string
+): Promise<AnalystOutput> {
   const [matches, odds, performance] = await Promise.all([
     getTodayMatches(),
     getTodayOdds(),
@@ -44,11 +58,13 @@ export async function runAnalyst(plannerOutput: PlannerOutput): Promise<AnalystO
 
     const homeOver25 = calcTrend(homeH, m => m.total_goals > 2.5)
     const awayOver25 = calcTrend(awayH, m => m.total_goals > 2.5)
+    const homeUnder25 = calcTrend(homeH, m => m.total_goals < 2.5)
+    const awayUnder25 = calcTrend(awayH, m => m.total_goals < 2.5)
     const homeBtts = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
     const awayBtts = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
+    const homeWins = calcTrend(homeH, m => m.result === 'W' && m.home)
 
     const oddsLines: string[] = []
-
     const { home, draw, away } = matchOdds.h2h
     if (home != null && home >= MIN_ODDS && home <= MAX_ODDS) oddsLines.push(`Victoire domicile: ${home.toFixed(2)}`)
     if (draw != null && draw >= MIN_ODDS && draw <= MAX_ODDS) oddsLines.push(`Match nul: ${draw.toFixed(2)}`)
@@ -64,33 +80,43 @@ export async function runAnalyst(plannerOutput: PlannerOutput): Promise<AnalystO
 
     if (!oddsLines.length) continue
 
+    // Actualités blessures/suspensions (en parallèle pour les deux équipes)
+    const [homeNews, awayNews] = await Promise.all([
+      checkTeamNews(match.home_team.name),
+      checkTeamNews(match.away_team.name),
+    ])
+
     enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
-Domicile (${homeH.length} matchs): over2.5=${homeOver25.pct}%, btts=${homeBtts.pct}%
-Extérieur (${awayH.length} matchs): over2.5=${awayOver25.pct}%, btts=${awayBtts.pct}%
-Cotes (${MIN_ODDS}–${MAX_ODDS}): ${oddsLines.join(', ')}`)
+Domicile ${match.home_team.name} (${homeH.length} matchs): over2.5=${homeOver25.pct}%, under2.5=${homeUnder25.pct}%, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%
+Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, under2.5=${awayUnder25.pct}%, btts=${awayBtts.pct}%
+Actualités ${match.home_team.name}: ${homeNews}
+Actualités ${match.away_team.name}: ${awayNews}
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${oddsLines.join(', ')}`)
   }
 
   if (!enriched.length) {
     return {
       picks_retenus: [],
       picks_rejetés: [],
-      summary: 'Aucun match éligible trouvé pour aujourd\'hui.',
-      model_used: 'claude-haiku-4-5',
+      summary: "Aucun match éligible trouvé pour aujourd'hui.",
+      model_used: 'none',
     }
   }
 
-  const systemPrompt = `Tu es l'analyste de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
+  const systemPrompt = `Tu es l'analyste expert de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
 
-CRITÈRES OBLIGATOIRES :
-- Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs récents
-- Cote entre ${MIN_ODDS} et ${MAX_ODDS}
-- Maximum ${MAX_PICKS} picks retenus
-- Football uniquement
+RÈGLES ABSOLUES — tout pick qui ne respecte pas ces critères DOIT être rejeté sans exception :
+1. Tendance ≥ ${MIN_TREND_PCT}% calculée sur ≥ ${MIN_SAMPLE} matchs récents
+2. Cote entre ${MIN_ODDS} et ${MAX_ODDS} inclus
+3. Maximum ${MAX_PICKS} picks retenus dans picks_retenus
+4. Si les actualités signalent une blessure clé ou suspension de titulaire, rejeter le pick concerné
 
-MÉMOIRE DE PERFORMANCE :
-${memoryContext}
+MÉMOIRE DE PERFORMANCE HISTORIQUE (pondère tes choix en conséquence) :
+${memoryContext || 'Aucun historique disponible — première analyse.'}
 
-Réponds UNIQUEMENT avec un JSON valide :
+${supervisorFeedback ? `FEEDBACK SUPERVISEUR À CORRIGER IMPÉRATIVEMENT :\n${supervisorFeedback}\n` : ''}
+
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou après :
 {
   "picks_retenus": [
     {
@@ -111,23 +137,30 @@ Réponds UNIQUEMENT avec un JSON valide :
   "summary": "string (2-3 phrases sur la sélection du jour)"
 }`
 
-  const userMessage = `Focus du Planner : ${plannerOutput.focus_areas.join(', ')}
+  const userMessage = `Focus du jour : ${plannerOutput.focus_areas.join(', ')}
 Contexte : ${plannerOutput.context}
 
 Données des matchs :
 ${enriched.join('\n\n')}`
 
   const { text, model_used } = await routeCompletion('analyst', systemPrompt, userMessage, 2048)
-  const jsonStr = text.startsWith('{') ? text : text.replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+  const jsonStr = extractJson(text)
 
   try {
     const parsed = JSON.parse(jsonStr) as AnalystOutput
-    return { ...parsed, model_used }
+    // Validation stricte post-parsing
+    const validPicks = parsed.picks_retenus.filter(p =>
+      p.trend_pct >= MIN_TREND_PCT &&
+      p.sample_size >= MIN_SAMPLE &&
+      p.odds >= MIN_ODDS &&
+      p.odds <= MAX_ODDS
+    )
+    return { ...parsed, picks_retenus: validPicks, model_used }
   } catch {
     return {
       picks_retenus: [],
       picks_rejetés: [],
-      summary: 'Erreur de parsing JSON dans la réponse de l\'analyste.',
+      summary: "Erreur de parsing JSON dans la réponse de l'analyste.",
       model_used,
     }
   }

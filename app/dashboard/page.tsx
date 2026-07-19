@@ -24,7 +24,7 @@ export default async function DashboardPage() {
       .limit(60),
     supabase
       .from('picks')
-      .select('result, was_rejected')
+      .select('result, odds, was_rejected')
       .eq('was_rejected', false)
       .not('result', 'is', null)
       .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
@@ -32,22 +32,29 @@ export default async function DashboardPage() {
 
   const allPicks = picks ?? []
   const wins = allPicks.filter(p => p.result === 'win').length
-  const total = allPicks.filter(p => p.result !== 'void').length
+  const losses = allPicks.filter(p => p.result === 'loss').length
+  const total = wins + losses
   const winRate = total > 0 ? Math.round((wins / total) * 100) : 0
+
+  // ROI : (somme cotes gagnées - nombre pertes) / total misé × 100
+  const winOddsSum = allPicks
+    .filter(p => p.result === 'win')
+    .reduce((acc, p) => acc + ((p.odds as number) - 1), 0)
+  const roi = total > 0 ? Math.round(((winOddsSum - losses) / total) * 100) / 100 : 0
 
   const publishedToday = (sessions ?? []).filter(
     s => s.date === today && s.status === 'published'
   ).length
-
   const pendingReview = (sessions ?? []).filter(s => s.status === 'draft').length
 
-  // Current streak
+  // Streak : sessions consécutives sans aucune perte
   const sortedSessions = [...(sessions ?? [])].sort((a, b) => b.date.localeCompare(a.date))
   let streak = 0
   for (const s of sortedSessions) {
     const sessionPicks = (s.picks as Array<{ result: string | null }> | undefined) ?? []
-    const hasPendingOrLoss = sessionPicks.some(p => !p.result || p.result === 'loss')
-    if (!hasPendingOrLoss && sessionPicks.length > 0) streak++
+    const hasLoss = sessionPicks.some(p => p.result === 'loss')
+    const allResolved = sessionPicks.length > 0 && sessionPicks.every(p => p.result !== null)
+    if (allResolved && !hasLoss) streak++
     else break
   }
 
@@ -57,7 +64,7 @@ export default async function DashboardPage() {
     pending_review: pendingReview,
     published_today: publishedToday,
     current_streak: streak,
-    roi_this_month: 0,
+    roi_this_month: roi,
   }
 
   return <DashboardClient todaySession={todaySession as PronosticSession | null} stats={stats} />

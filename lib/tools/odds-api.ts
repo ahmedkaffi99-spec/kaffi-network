@@ -1,6 +1,4 @@
 const BASE_URL = 'https://api.the-odds-api.com/v4'
-
-// Sports couverts par notre pipeline
 const SPORT = 'soccer'
 
 interface OddsOutcome { name: string; price: number }
@@ -31,7 +29,6 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   url.searchParams.set('dateFormat', 'iso')
 
   const res = await fetch(url.toString(), { cache: 'no-store' })
-
   if (!res.ok) {
     console.warn(`Odds API ${res.status} — continuing without real-time odds`)
     return []
@@ -41,7 +38,6 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
 
   return events.map(event => {
     const allMarkets = event.bookmakers.flatMap(b => b.markets)
-
     const h2hOutcomes = allMarkets.filter(m => m.key === 'h2h').flatMap(m => m.outcomes)
     const totalsOutcomes = allMarkets.filter(m => m.key === 'totals').flatMap(m => m.outcomes)
     const bttsOutcomes = allMarkets.filter(m => m.key === 'btts').flatMap(m => m.outcomes)
@@ -73,10 +69,41 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   })
 }
 
-// Trouve les cotes d'un match par nom d'équipe (correspondance partielle)
-export function findMatchOdds(odds: MatchOdds[], homeTeam: string, awayTeam: string): MatchOdds | null {
-  return odds.find(o =>
-    o.home_team.toLowerCase().includes(homeTeam.toLowerCase().slice(0, 6)) ||
-    o.away_team.toLowerCase().includes(awayTeam.toLowerCase().slice(0, 6))
-  ) ?? null
+// Similarité par mots communs (robuste aux abréviations et variantes de noms)
+function teamSimilarity(a: string, b: string): number {
+  const normalize = (s: string) =>
+    s.toLowerCase()
+      .replace(/[^a-z0-9 ]/g, '')
+      .replace(/\b(fc|cf|sc|rc|ac|ss|afc|bsc|vfb|rcd|ssc|ud|cd)\b/g, '')
+      .trim()
+  const wa = normalize(a).split(/\s+/).filter(Boolean)
+  const wb = normalize(b).split(/\s+/).filter(Boolean)
+  const setB = new Set(wb)
+  const intersection = wa.filter(w => setB.has(w)).length
+  const union = new Set([...wa, ...wb]).size
+  return union === 0 ? 0 : intersection / union
+}
+
+export function findMatchOdds(
+  odds: MatchOdds[],
+  homeTeam: string,
+  awayTeam: string
+): MatchOdds | null {
+  const THRESHOLD = 0.3 // au moins 1 mot commun significatif
+
+  let best: MatchOdds | null = null
+  let bestScore = -1
+
+  for (const o of odds) {
+    const homeScore = teamSimilarity(o.home_team, homeTeam)
+    const awayScore = teamSimilarity(o.away_team, awayTeam)
+    const score = homeScore + awayScore
+
+    if (homeScore >= THRESHOLD && awayScore >= THRESHOLD && score > bestScore) {
+      bestScore = score
+      best = o
+    }
+  }
+
+  return best
 }
