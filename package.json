@@ -14,6 +14,7 @@
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.1",
     "ai": "^7.0.31",
+    "flag-icons": "^7.5.0",
     "next": "^15.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

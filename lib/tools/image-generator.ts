@@ -4,6 +4,7 @@ import satori from 'satori'
 import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
 import { shortenBetType, teamInitials } from '@/lib/tools/display-format'
+import { resolveMatchFlags } from '@/lib/tools/flags'
 
 function loadFont(weight: 400 | 700): ArrayBuffer {
   const file = weight === 700 ? 'inter-700.woff' : 'inter-400.woff'
@@ -36,11 +37,11 @@ function numberBadge(n: number) {
   }
 }
 
-// Pas de vrai blason d'équipe : ni API-Football (indisponible en mode
-// cotes-uniquement, notre mode réel actuel) ni The Odds API ne fournissent
-// d'URL de logo exploitable de façon fiable. Badge d'initiales à la place —
-// toujours disponible, cohérent visuellement, aucune dépendance externe.
-function teamBadge(name: string) {
+// Badge d'initiales — utilisé quand aucun drapeau n'a pu être résolu
+// (compétition/pays non reconnu). Pas de vrai blason de club disponible
+// (ni API-Football en mode cotes-uniquement, ni The Odds API ne fournissent
+// d'URL de logo fiable).
+function initialsBadge(name: string) {
   return {
     type: 'div',
     props: {
@@ -63,11 +64,44 @@ function teamBadge(name: string) {
   }
 }
 
+// Vrai drapeau (image PNG rasterisée depuis flag-icons, voir lib/tools/flags.ts)
+function flagBadge(dataUri: string) {
+  return {
+    type: 'img',
+    props: {
+      src: dataUri,
+      width: 22,
+      height: 16,
+      style: { borderRadius: '3px', flexShrink: 0, objectFit: 'cover' as const },
+    },
+  }
+}
+
+function teamMarker(dataUri: string | null, name: string) {
+  return dataUri ? flagBadge(dataUri) : initialsBadge(name)
+}
+
 export async function generateTicketImage(
   picks: PickCandidate[],
   combinedOdds: number,
   date: string
 ): Promise<Buffer> {
+  // Résout les drapeaux AVANT de construire l'arbre Satori (rendu synchrone) —
+  // un par équipe pour un match international (les noms d'équipe sont des
+  // pays), un seul représentant la compétition pour un match de club (les
+  // deux équipes sont du même pays, un drapeau par équipe serait redondant).
+  const flagsByPick = await Promise.all(
+    picks.map(pick => resolveMatchFlags(pick.competition, pick.home_team, pick.away_team))
+  )
+  const homeMarkers = picks.map((pick, i) => {
+    const f = flagsByPick[i]
+    return f.mode === 'teams' ? f.home : f.mode === 'competition' ? f.flag : null
+  })
+  const awayMarkers = picks.map((pick, i) => {
+    const f = flagsByPick[i]
+    return f.mode === 'teams' ? f.away : f.mode === 'competition' ? f.flag : null
+  })
+
   const fontData = loadFont(400)
   const fontDataBold = loadFont(700)
   const formattedDate = new Date(date).toLocaleDateString('fr-FR', {
@@ -207,11 +241,11 @@ export async function generateTicketImage(
                                         props: {
                                           style: { display: 'flex', alignItems: 'center', gap: '7px', flex: 1, minWidth: 0 },
                                           children: [
-                                            teamBadge(pick.home_team),
+                                            teamMarker(homeMarkers[i], pick.home_team),
                                             { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.home_team } },
                                             { type: 'span', props: { style: { color: '#5b6b8c', fontSize: '10px', fontWeight: 700 }, children: 'VS' } },
                                             { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.away_team } },
-                                            teamBadge(pick.away_team),
+                                            teamMarker(awayMarkers[i], pick.away_team),
                                           ],
                                         },
                                       },
