@@ -114,19 +114,34 @@ export async function getTodayMatches(): Promise<TodayMatch[]> {
     .map(mapFixtureToTodayMatch)
 }
 
+// Plan gratuit API-Football : saisons disponibles 2022-2024, pas de paramètre `last`
+// Rate limit : 10 requêtes/minute → sleep 7s entre les appels d'historique
+const RATE_LIMIT_SLEEP = 7000
+const AVAILABLE_SEASONS = [2024, 2023, 2022]
+
 /**
  * Récupère l'historique des derniers matchs d'une équipe.
- * Coût : 1 requête API + 300 ms de sleep pour limiter le débit.
+ * Utilise season=2024 → 2023 → 2022 jusqu'à obtenir ≥8 matchs terminés.
+ * Coût : 1 à 3 requêtes API selon les données disponibles.
  */
 async function getTeamHistory(teamId: number, limit = 15): Promise<TeamMatchResult[]> {
-  await sleep(300)
-  const data = await trackRequest<ApiFixturesResponse>(
-    `/fixtures?team=${teamId}&last=${limit}`,
-    1
-  )
-  return data.response
-    .filter(entry => FINISHED_STATUSES.includes(entry.fixture.status.short))
-    .map(entry => mapFixtureToTeamMatchResult(entry, teamId))
+  let finished: ApiFixtureEntry[] = []
+
+  for (const season of AVAILABLE_SEASONS) {
+    await sleep(RATE_LIMIT_SLEEP)
+    const data = await trackRequest<ApiFixturesResponse>(
+      `/fixtures?team=${teamId}&season=${season}`,
+      1
+    )
+    const seasonFinished = data.response.filter(e => FINISHED_STATUSES.includes(e.fixture.status.short))
+    finished = [...finished, ...seasonFinished]
+    if (finished.length >= 8) break
+  }
+
+  return finished
+    .sort((a, b) => b.fixture.date.localeCompare(a.fixture.date))
+    .slice(0, limit)
+    .map(e => mapFixtureToTeamMatchResult(e, teamId))
 }
 
 /**
@@ -136,6 +151,11 @@ async function getTeamHistory(teamId: number, limit = 15): Promise<TeamMatchResu
  * Coût par match : 0, 1 ou 2 requêtes selon le cache (chaque équipe inédite = 1 req).
  * Marge de sécurité : 5 requêtes réservées avant la boucle.
  */
+// Limite le nombre de matchs pour rester dans le timeout Vercel (300s)
+// Rate limit 10 req/min (7s/call) × 3 saisons worst-case × 2 équipes × N matchs + AI
+// → MAX 8 matchs analysés par run = ~168s d'appels API + ~120s IA = ~288s
+const MAX_MATCHES_TO_ANALYZE = 8
+
 export async function buildMatchAnalysisData(
   matches: TodayMatch[],
   historyLimit = 15
@@ -144,29 +164,34 @@ export async function buildMatchAnalysisData(
   const result: MatchAnalysisData[] = []
 
   const SAFETY_MARGIN = 5
+  // Worst-case : 3 appels par équipe (3 saisons disponibles)
+  const COST_PER_TEAM = 3
   let remaining = await getRemainingQuota('api-football')
 
-  for (const match of matches) {
+  const limited = matches.slice(0, MAX_MATCHES_TO_ANALYZE)
+
+  for (const match of limited) {
     const homeInCache = cache.has(match.home_team.id)
     const awayInCache = cache.has(match.away_team.id)
-    const cost = (homeInCache ? 0 : 1) + (awayInCache ? 0 : 1)
+    const cost = (homeInCache ? 0 : COST_PER_TEAM) + (awayInCache ? 0 : COST_PER_TEAM)
 
     if (remaining - cost < SAFETY_MARGIN) {
       console.warn(
-        `[quota] Quota insuffisant pour ${match.home_team.name} vs ${match.away_team.name} ` +
-        `(restant: ${remaining}, coût: ${cost}, marge: ${SAFETY_MARGIN}) — arrêt de la boucle.`
+        `[quota] Quota insuffisant (restant: ${remaining}, coût: ${cost}) — arrêt après ${result.length} matchs.`
       )
       break
     }
 
     if (!homeInCache) {
-      cache.set(match.home_team.id, await getTeamHistory(match.home_team.id, historyLimit))
-      remaining -= 1
+      const hist = await getTeamHistory(match.home_team.id, historyLimit)
+      cache.set(match.home_team.id, hist)
+      remaining -= COST_PER_TEAM
     }
 
     if (!awayInCache) {
-      cache.set(match.away_team.id, await getTeamHistory(match.away_team.id, historyLimit))
-      remaining -= 1
+      const hist = await getTeamHistory(match.away_team.id, historyLimit)
+      cache.set(match.away_team.id, hist)
+      remaining -= COST_PER_TEAM
     }
 
     result.push({
