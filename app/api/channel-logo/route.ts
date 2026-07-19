@@ -71,16 +71,24 @@ export async function GET() {
                 zIndex: 1,
               },
               children: [
-                // Icône éclair
+                // Marque "K" — Satori ne rend pas les glyphes emoji correctement
                 {
                   type: 'div',
                   props: {
                     style: {
-                      fontSize: '96px',
-                      lineHeight: '1',
+                      width: '140px',
+                      height: '140px',
+                      borderRadius: '32px',
+                      background: 'linear-gradient(135deg, #d9b56f 0%, #9c7739 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '72px',
+                      fontWeight: 700,
+                      color: '#060d1f',
                       marginBottom: '16px',
                     },
-                    children: '⚡',
+                    children: 'K',
                   },
                 },
                 // KAFFI

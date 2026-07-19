@@ -16,7 +16,12 @@ const MISSION: AgentMission = {
   ],
 }
 
-const FORBIDDEN_WORDS = ['garanti', 'garantine', 'sûr à 100', '100% sûr', 'certain à 100', 'infaillible', 'sans risque', "gagné d'avance", 'coup sûr']
+const FORBIDDEN_WORDS = [
+  // Promesses de gain non tenables
+  'garanti', 'garantine', 'sûr à 100', '100% sûr', 'certain à 100', 'infaillible', 'sans risque', "gagné d'avance", 'coup sûr',
+  // Langage familier / références inappropriées à la mort — jamais dans un contexte de paris
+  'suicide', 'roulette russe', 'mortel', 'de ouf',
+]
 
 export interface SupervisorTierResult {
   verdict: 'approved' | 'revision_needed'

@@ -37,9 +37,18 @@ export async function runWriter(
 
   const system = `${renderMission(MISSION)}
 
-Kaffi Network est une chaîne Telegram de pronostics football premium.
-Tu écris des posts engageants, confiants et professionnels en français.
-Style : direct, percutant, sans fioritures. Format HTML Telegram UNIQUEMENT :
+Kaffi Network est une chaîne Telegram de pronostics football PREMIUM — le
+ton doit être celui d'une marque haut de gamme, pas d'un groupe de paris
+entre potes.
+
+TON : sobre, confiant, mesuré. Direct et percutant ne veut PAS dire familier.
+INTERDIT ABSOLUMENT :
+- Argot, langage de rue, expressions comme "le frisson", "du lourd", "ça envoie", "de ouf"
+- Toute référence à la mort/au danger physique, même en expression figurée (ex: "suicide", "mortel", "roulette russe") — inacceptable dans un contexte de paris
+- Points d'exclamation multiples, majuscules pour crier, emojis autres que les numéros de liste
+Pour communiquer le niveau de risque d'un palier audacieux, utilise un vocabulaire mesuré : "ambitieux", "plus exigeant", "sélection à cote plus élevée" — jamais de sensationnalisme.
+
+FORMAT HTML Telegram UNIQUEMENT :
 - Gras : <b>texte</b>  ·  Italique : <i>texte</i>
 - Aucune autre balise. N'utilise JAMAIS la syntaxe Markdown (*, _, \`, [, ]).
 - Ponctuation normale (., !, -, parenthèses) : jamais besoin de les échapper.
@@ -52,7 +61,7 @@ ${picksText}
 Cote combinée : ${combo.combined_odds.toFixed(2)} (${combo.picks.length} matchs, cote moyenne par match ${avgPickOdds.toFixed(2)})
 
 Structure du post :
-1. Accroche percutante (1 ligne), mentionne le palier "${tierLabel}" — le risque du palier se juge à la cote MOYENNE PAR MATCH (${avgPickOdds.toFixed(2)}), pas à la cote combinée (qui est grosse pour les 3 paliers vu le nombre de matchs) : prudent = cote par match basse/tendance forte, audacieux = cote par match plus haute/plus incertaine
+1. Accroche sobre et confiante (1 ligne), mentionne le palier "${tierLabel}" avec un vocabulaire mesuré — le risque du palier se juge à la cote MOYENNE PAR MATCH (${avgPickOdds.toFixed(2)}), pas à la cote combinée (qui est grosse pour les 3 paliers vu le nombre de matchs) : prudent = cote par match basse/tendance forte ("sélection prudente"), audacieux = cote par match plus haute/plus incertaine ("sélection ambitieuse", jamais de sensationnalisme)
 2. Chaque pick avec emoji numéroté (1️⃣ 2️⃣ etc.), match en gras, type de pari, cote, tendance courte
 3. Cote combinée mise en valeur, en rappelant que ${combo.picks.length} résultats doivent tous se réaliser
 4. CTA discret avec lien affilié : ${process.env.AFFILIATE_LINK ?? ''}
