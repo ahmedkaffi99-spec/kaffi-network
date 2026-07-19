@@ -34,6 +34,18 @@ const TIER_LABELS: Record<string, string> = {
   audacieux: 'Audacieux',
 }
 
+const COMBO_RESULT_STYLES: Record<string, string> = {
+  win: 'bg-emerald-900/30 text-emerald-400 border-emerald-700/40',
+  loss: 'bg-red-900/30 text-red-400 border-red-700/40',
+  void: 'bg-gray-800/40 text-gray-400 border-gray-700/40',
+}
+
+const COMBO_RESULT_LABELS: Record<string, string> = {
+  win: '✅ GAGNÉ',
+  loss: '❌ PERDU',
+  void: '➖ ANNULÉ',
+}
+
 export default async function PronosticDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
@@ -71,6 +83,11 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
           <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${STATUS_STYLES[session.status] ?? ''}`}>
             {session.status.toUpperCase()}
           </span>
+          {session.combo_result && (
+            <span className={`px-3 py-1 text-xs font-bold rounded-full border ${COMBO_RESULT_STYLES[session.combo_result] ?? ''}`}>
+              {COMBO_RESULT_LABELS[session.combo_result] ?? session.combo_result}
+            </span>
+          )}
           {session.combined_odds && (
             <span className="px-3 py-1 text-xs font-semibold rounded-full border border-gold-500/30 bg-gold-500/10 text-gold-400">
               Cote combinée : {session.combined_odds.toFixed(2)}
