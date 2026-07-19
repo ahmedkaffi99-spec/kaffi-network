@@ -11,9 +11,19 @@ const ANALYST_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
 ]
 
+const WRITER_MODELS = [
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemma-4-26b-a4b-it:free',
+]
+
+const SUPERVISOR_MODELS = [
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+]
+
 const CLAUDE_FALLBACK = 'claude-haiku-4-5-20251001'
 
-export type AgentRole = 'planner' | 'analyst'
+export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
 
 interface Message {
   role: 'user' | 'assistant' | 'system'
@@ -85,7 +95,11 @@ export async function routeCompletion(
   userMessage: string,
   maxTokens = 1024
 ): Promise<RouterResult> {
-  const models = role === 'planner' ? PLANNER_MODELS : ANALYST_MODELS
+  const models =
+    role === 'planner' ? PLANNER_MODELS :
+    role === 'writer' ? WRITER_MODELS :
+    role === 'supervisor' ? SUPERVISOR_MODELS :
+    ANALYST_MODELS
   const messages: Message[] = [{ role: 'user', content: userMessage }]
 
   for (const model of models) {

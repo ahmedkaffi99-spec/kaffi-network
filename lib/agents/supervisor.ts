@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { routeCompletion } from '@/lib/model-router'
 import type { AnalystOutput, SupervisorNotes, SupervisorCheck } from '@/lib/types'
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 const MIN_TREND_PCT = 80
 const MIN_SAMPLE = 8
@@ -67,16 +65,12 @@ export async function runSupervisor(
     .map(p => `${p.home_team} vs ${p.away_team} (${p.competition}) → ${p.bet_type} @ ${p.odds.toFixed(2)} | tendance ${p.trend_pct}% sur ${p.sample_size} matchs`)
     .join('\n')
 
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 512,
-    system: `Tu es le superviseur de Kaffi Network. Tu valides la qualité éditoriale des picks.
+  const { text: raw } = await routeCompletion(
+    'supervisor',
+    `Tu es le superviseur de Kaffi Network. Tu valides la qualité éditoriale des picks.
 Vérifie : diversité des compétitions, cohérence des types de paris, absence de contradictions.
 Réponds UNIQUEMENT avec du JSON valide.`,
-    messages: [
-      {
-        role: 'user',
-        content: `Valide ce combiné (itération ${iteration}) :
+    `Valide ce combiné (itération ${iteration}) :
 
 ${picksText}
 
@@ -88,11 +82,8 @@ JSON attendu :
   "issues": ["problèmes si revision_needed"],
   "feedback": "commentaire bref"
 }`,
-      },
-    ],
-  })
-
-  const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : '{}'
+    512
+  )
   const braceStart = raw.indexOf('{')
   const braceEnd = raw.lastIndexOf('}')
   const jsonStr = braceStart !== -1 ? raw.slice(braceStart, braceEnd + 1) : raw
@@ -112,7 +103,7 @@ JSON attendu :
     checks: [check],
     final_verdict: check.verdict === 'approved' ? 'approved' : 'rejected',
     iterations: iteration,
-    model_used: 'claude-haiku-4-5',
+    model_used: check.verdict === 'approved' ? 'openrouter' : 'openrouter',
     feedback_for_analyst: feedbackForAnalyst,
   }
 }
