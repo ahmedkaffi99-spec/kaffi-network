@@ -81,14 +81,6 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
       .update({ analyst_output: analystOutput, supervisor_notes: supervisorNotes, iterations: iteration })
       .eq('id', sessionId)
 
-    if (supervisorResult.final_verdict === 'rejected') {
-      await adminSupabase
-        .from('pronostic_sessions')
-        .update({ status: 'rejected', notes: supervisorResult.checks.at(-1)?.feedback })
-        .eq('id', sessionId)
-      return { success: false, sessionId, message: 'Pipeline rejeté après supervision maximale.' }
-    }
-
     const picks = analystOutput.picks_retenus
     if (!picks.length) {
       await adminSupabase
