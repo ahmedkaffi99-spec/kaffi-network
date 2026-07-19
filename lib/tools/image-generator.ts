@@ -3,6 +3,7 @@ import { join } from 'path'
 import satori from 'satori'
 import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
+import { shortenBetType, teamInitials } from '@/lib/tools/display-format'
 
 function loadFont(weight: 400 | 700): ArrayBuffer {
   const file = weight === 700 ? 'inter-700.woff' : 'inter-400.woff'
@@ -31,6 +32,33 @@ function numberBadge(n: number) {
         flexShrink: 0,
       },
       children: String(n),
+    },
+  }
+}
+
+// Pas de vrai blason d'équipe : ni API-Football (indisponible en mode
+// cotes-uniquement, notre mode réel actuel) ni The Odds API ne fournissent
+// d'URL de logo exploitable de façon fiable. Badge d'initiales à la place —
+// toujours disponible, cohérent visuellement, aucune dépendance externe.
+function teamBadge(name: string) {
+  return {
+    type: 'div',
+    props: {
+      style: {
+        width: '22px',
+        height: '22px',
+        borderRadius: '50%',
+        background: 'rgba(255,255,255,0.08)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '9px',
+        fontWeight: 700,
+        color: '#c3cbdc',
+        flexShrink: 0,
+      },
+      children: teamInitials(name),
     },
   }
 }
@@ -172,14 +200,26 @@ export async function generateTicketImage(
                                 {
                                   type: 'div',
                                   props: {
-                                    style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+                                    style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' },
                                     children: [
-                                      { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700 }, children: `${pick.home_team} - ${pick.away_team}` } },
-                                      { type: 'span', props: { style: { color: '#e8cf9e', fontSize: '13px', fontWeight: 700 }, children: `@${pick.odds.toFixed(2)}` } },
+                                      {
+                                        type: 'div',
+                                        props: {
+                                          style: { display: 'flex', alignItems: 'center', gap: '7px', flex: 1, minWidth: 0 },
+                                          children: [
+                                            teamBadge(pick.home_team),
+                                            { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.home_team } },
+                                            { type: 'span', props: { style: { color: '#5b6b8c', fontSize: '10px', fontWeight: 700 }, children: 'VS' } },
+                                            { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.away_team } },
+                                            teamBadge(pick.away_team),
+                                          ],
+                                        },
+                                      },
+                                      { type: 'span', props: { style: { color: '#e8cf9e', fontSize: '13px', fontWeight: 700, flexShrink: 0 }, children: `@${pick.odds.toFixed(2)}` } },
                                     ],
                                   },
                                 },
-                                { type: 'span', props: { style: { color: '#c9a35c', fontSize: '11px', fontWeight: 600, marginTop: '3px' }, children: pick.bet_type } },
+                                { type: 'span', props: { style: { color: '#c9a35c', fontSize: '11px', fontWeight: 600, marginTop: '4px' }, children: shortenBetType(pick.bet_type) } },
                                 { type: 'span', props: { style: { color: '#7c8aab', fontSize: '10px', marginTop: '2px' }, children: pick.trend_label } },
                               ],
                             },

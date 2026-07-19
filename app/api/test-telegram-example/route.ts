@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateTicketImage } from '@/lib/tools/image-generator'
 import { sendPhoto } from '@/lib/tools/telegram'
+import { shortenBetType } from '@/lib/tools/display-format'
 import type { PickCandidate } from '@/lib/types'
 
 // Endpoint temporaire — génère un combiné avec des données INVENTÉES pour
@@ -30,7 +31,7 @@ export async function GET() {
       '',
       '🎫 <b>Aperçu du format Combiné Kaffi Network</b>',
       '',
-      ...FAKE_PICKS.map((p, i) => `${i + 1}. <b>${p.home_team} - ${p.away_team}</b> → ${p.bet_type} (cote ${p.odds.toFixed(2)})\n   💡 <i>${p.trend_label}</i>`),
+      ...FAKE_PICKS.map((p, i) => `${i + 1}. <b>${p.home_team} VS ${p.away_team}</b> → ${shortenBetType(p.bet_type)} (cote ${p.odds.toFixed(2)})\n   💡 <i>${p.trend_label}</i>`),
       '',
       `<b>Cote combinée : ${combinedOdds.toFixed(2)}</b>`,
       '',

@@ -1,4 +1,5 @@
 import type { PickCandidate, Tier } from '@/lib/types'
+import { shortenBetType } from '@/lib/tools/display-format'
 
 const TIER_LABELS: Record<Tier, string> = {
   prudent: 'Prudent',
@@ -27,8 +28,8 @@ export function formatCombinePost(picks: PickCandidate[], combinedOdds: number):
 
   picks.forEach((pick, i) => {
     const num = NUMBER_EMOJIS[i] ?? `${i + 1}.`
-    const match = escapeHtml(`${pick.home_team} - ${pick.away_team}`)
-    const bet = escapeHtml(pick.bet_type)
+    const match = escapeHtml(`${pick.home_team} VS ${pick.away_team}`)
+    const bet = escapeHtml(shortenBetType(pick.bet_type))
     const odds = pick.odds.toFixed(2)
     const trend = escapeHtml(pick.trend_label)
     lines.push(`${num} <b>${match}</b> → ${bet} (cote ${odds})`)
