@@ -1,9 +1,24 @@
-import { routeCompletion } from '@/lib/model-router'
+import { callAgentModel, renderMission } from '@/lib/agent-kernel'
+import type { Blackboard } from '@/lib/agent-kernel/blackboard'
+import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { AnalystOutput } from '@/lib/types'
+
+const MISSION: AgentMission = {
+  role: 'writer',
+  label: 'le Rédacteur',
+  responsibility: 'rédiger le post Telegram final à partir des picks déjà validés par le Superviseur.',
+  doesNot: [
+    'Ne sélectionne, ne modifie, ni ne retire aucun pick.',
+    'Ne décide pas si le combiné doit être publié — cette décision est déjà prise en amont.',
+    "N'ajoute aucune promesse de gain non présente dans les données (garanti, sûr à 100%, etc.).",
+  ],
+}
 
 export async function runWriter(
   analystOutput: AnalystOutput,
-  date: string
+  date: string,
+  blackboard: Blackboard,
+  budget: RunBudget
 ): Promise<string> {
   const picks = analystOutput.picks_retenus
   const combinedOdds = picks.reduce((acc, p) => acc * p.odds, 1)
@@ -14,7 +29,9 @@ export async function runWriter(
    Tendance : ${p.trend_label}`)
     .join('\n')
 
-  const system = `Tu es le rédacteur de Kaffi Network, une chaîne Telegram de pronostics football premium.
+  const system = `${renderMission(MISSION)}
+
+Kaffi Network est une chaîne Telegram de pronostics football premium.
 Tu écris des posts engageants, confiants et professionnels en français.
 Style : direct, percutant, sans fioritures. Utilise MarkdownV2 Telegram.
 Règles MarkdownV2 : échappe ces caractères avec \\ : _ * [ ] ( ) ~ \` > # + - = | { } . !`
@@ -34,6 +51,9 @@ Structure du post :
 
 Réponds UNIQUEMENT avec le texte du post, prêt à envoyer.`
 
-  const { text } = await routeCompletion('writer', system, userMessage, 800)
+  const { text } = await callAgentModel('writer', system, userMessage, 800, blackboard, budget)
+
+  blackboard.post({ from: 'writer', type: 'action', content: `Post Telegram rédigé (${text.length} caractères).` })
+
   return text
 }

@@ -50,6 +50,7 @@ export interface PlannerOutput {
   competitions: string[]
   focus_areas: string[]
   context: string
+  reasoning?: string
   model_used?: string
 }
 
@@ -75,6 +76,7 @@ export interface RejectedPick {
 }
 
 export interface AnalystOutput {
+  plan?: string
   picks_retenus: PickCandidate[]
   picks_rejetés: RejectedPick[]
   summary: string
@@ -85,6 +87,7 @@ export interface SupervisorCheck {
   verdict: 'approved' | 'revision_needed'
   issues?: string[]
   feedback?: string
+  lesson_for_memory?: string
 }
 
 export interface SupervisorNotes {
@@ -127,4 +130,18 @@ export interface DashboardStats {
   published_today: number
   current_streak: number
   roi_this_month: number
+}
+
+// ─── Journal des agents (agent_messages) ───────────────────────────────────────
+
+export interface AgentMessageRow {
+  id: string
+  run_id: string
+  scope: string
+  session_id: string | null
+  from_role: string
+  to_role: string | null
+  type: 'observation' | 'plan' | 'decision' | 'reflection' | 'action' | 'result'
+  content: string
+  created_at: string
 }

@@ -1,13 +1,17 @@
 import { adminSupabase } from '@/lib/supabase/admin'
 import { runPlanner } from '@/lib/agents/planner'
-import { runAnalyst } from '@/lib/agents/analyst'
+import { gatherAnalystContext, reasonAnalystPicks } from '@/lib/agents/analyst'
 import { runWriter } from '@/lib/agents/writer'
 import { runSupervisor } from '@/lib/agents/supervisor'
 import { checkDuplicates, savePublishedMatches } from '@/lib/tools/duplicate-checker'
 import { generateTicketImage } from '@/lib/tools/image-generator'
 import { formatCombinePost, sendPhoto } from '@/lib/tools/telegram'
+import { Blackboard, createBudget, budgetExceeded, loadLongTermDigest, persistLongTermLesson, persistRunTranscript } from '@/lib/agent-kernel'
 
-const MAX_ITERATIONS = 2
+// Identifie ce crew dans la mémoire long terme et le journal des agents —
+// le kernel (lib/agent-kernel) est générique, ce pipeline foot n'en est
+// qu'une instance parmi d'autres futurs "crews" possibles.
+const SCOPE = 'pronostics-foot'
 
 export interface OrchestratorResult {
   success: boolean
@@ -48,25 +52,53 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
   }
 
   const sessionId = session.id as string
+  const blackboard = new Blackboard(crypto.randomUUID())
+  // Boucle bornée et prévisible : plafond d'itérations ET budget d'appels
+  // modèle/temps, pour rester compatible avec le timeout Vercel (300s) même
+  // si la boucle de révision analyste ⇄ superviseur va au bout.
+  const budget = createBudget({ maxIterations: 3, maxModelCalls: 12, deadlineMs: 260_000 })
 
   try {
+    const longTermDigest = await loadLongTermDigest(SCOPE)
+    blackboard.write('longTermMemory', longTermDigest)
+
     // ── Étape 1 : Planner ────────────────────────────────────────────────────
-    const plannerOutput = await runPlanner(targetDate)
+    const plannerOutput = await runPlanner(targetDate, blackboard, budget)
     await adminSupabase
       .from('pronostic_sessions')
       .update({ planner_output: plannerOutput })
       .eq('id', sessionId)
 
-    // ── Étape 2+3 : Analyst + Supervisor avec feedback itératif ──────────────
-    let analystOutput = await runAnalyst(plannerOutput)
-    let supervisorResult = await runSupervisor(analystOutput, 1)
+    // ── Étape 2 : Perception — une seule fois, réutilisée à chaque itération ─
+    const analystContext = await gatherAnalystContext(plannerOutput, blackboard)
+
+    // ── Étape 3 : Analyst ⇄ Supervisor avec feedback itératif, budget-aware ──
+    let analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, undefined, blackboard, budget)
+    blackboard.post({
+      from: 'analyst',
+      to: 'supervisor',
+      type: 'decision',
+      content: `${analystOutput.picks_retenus.length} picks retenus — ${analystOutput.summary}`,
+    })
+
+    let supervisorResult = await runSupervisor(analystOutput, 1, blackboard, budget)
     let iteration = 1
 
-    while (supervisorResult.final_verdict === 'rejected' && iteration < MAX_ITERATIONS) {
+    while (supervisorResult.final_verdict === 'rejected' && iteration < budget.maxIterations) {
+      const exceeded = budgetExceeded(budget, blackboard)
+      if (exceeded) {
+        blackboard.post({ from: 'supervisor', type: 'decision', content: `Arrêt anticipé de la révision — ${exceeded}.` })
+        break
+      }
       iteration++
-      // Passe le feedback du superviseur à l'analyst pour qu'il corrige
-      analystOutput = await runAnalyst(plannerOutput, supervisorResult.feedback_for_analyst)
-      supervisorResult = await runSupervisor(analystOutput, iteration)
+      analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, supervisorResult.feedback_for_analyst, blackboard, budget)
+      blackboard.post({
+        from: 'analyst',
+        to: 'supervisor',
+        type: 'decision',
+        content: `Itération ${iteration} — ${analystOutput.picks_retenus.length} picks révisés.`,
+      })
+      supervisorResult = await runSupervisor(analystOutput, iteration, blackboard, budget)
     }
 
     const supervisorNotes = {
@@ -81,18 +113,28 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
       .update({ analyst_output: analystOutput, supervisor_notes: supervisorNotes, iterations: iteration })
       .eq('id', sessionId)
 
+    if (supervisorResult.lesson_for_memory) {
+      await persistLongTermLesson(SCOPE, `lesson-${sessionId}`, supervisorResult.lesson_for_memory)
+    }
+
     const picks = analystOutput.picks_retenus
-    if (!picks.length) {
-      await adminSupabase
-        .from('pronostic_sessions')
-        .update({ status: 'rejected', notes: "Aucun pick retenu par l'analyste." })
-        .eq('id', sessionId)
-      return { success: false, sessionId, message: 'Aucun pick retenu.' }
+
+    // La décision du superviseur doit réellement bloquer la publication —
+    // pas seulement l'absence de picks. Avant, un rejet persistant après la
+    // dernière itération n'empêchait pas la publication tant que la liste de
+    // picks n'était pas vide.
+    if (!picks.length || supervisorResult.final_verdict !== 'approved') {
+      const notes = picks.length
+        ? 'Combiné rejeté par le superviseur après les itérations de révision disponibles.'
+        : "Aucun pick retenu par l'analyste."
+      await adminSupabase.from('pronostic_sessions').update({ status: 'rejected', notes }).eq('id', sessionId)
+      return { success: false, sessionId, message: notes }
     }
 
     // ── Étape 4 : Duplicate checker ──────────────────────────────────────────
     const { ok, duplicates } = await checkDuplicates(picks, sessionId)
     if (!ok) {
+      blackboard.post({ from: 'orchestrator', type: 'decision', content: `Publication bloquée — doublons : ${duplicates.join(', ')}` })
       await adminSupabase
         .from('pronostic_sessions')
         .update({ status: 'rejected', notes: `Doublons détectés : ${duplicates.join(', ')}` })
@@ -101,7 +143,7 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     }
 
     // ── Étape 5 : Writer ─────────────────────────────────────────────────────
-    const writerOutput = await runWriter(analystOutput, targetDate)
+    const writerOutput = await runWriter(analystOutput, targetDate, blackboard, budget)
     await adminSupabase
       .from('pronostic_sessions')
       .update({ writer_output: writerOutput })
@@ -134,6 +176,7 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     const forbidden = FORBIDDEN.filter(w => writerLower.includes(w.toLowerCase()))
     if (forbidden.length > 0) {
       console.warn(`[orchestrator] 🚫 Mots interdits détectés dans le post : ${forbidden.join(', ')}`)
+      blackboard.post({ from: 'orchestrator', type: 'decision', content: `Publication bloquée — mots interdits : ${forbidden.join(', ')}` })
       await adminSupabase
         .from('pronostic_sessions')
         .update({ status: 'rejected', notes: `Post bloqué — mots interdits : ${forbidden.join(', ')}` })
@@ -145,8 +188,9 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     const imageBuffer = await generateTicketImage(picks, combinedOdds, targetDate)
     const caption = formatCombinePost(picks, combinedOdds)
     const telegramMsgId = await sendPhoto(imageBuffer, caption)
+    blackboard.post({ from: 'orchestrator', type: 'action', content: `Publié sur Telegram — message #${telegramMsgId}.` })
 
-    // ── Étape 8 : Finalisation ───────────────────────────────────────────────
+    // ── Étape 9 : Finalisation ───────────────────────────────────────────────
     await adminSupabase
       .from('pronostic_sessions')
       .update({
@@ -169,10 +213,15 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    blackboard.post({ from: 'orchestrator', type: 'result', content: `Erreur pipeline : ${msg}` })
     await adminSupabase
       .from('pronostic_sessions')
       .update({ status: 'rejected', notes: `Erreur pipeline : ${msg}` })
       .eq('id', sessionId)
     return { success: false, sessionId, message: `Erreur pipeline : ${msg}` }
+  } finally {
+    // Le blackboard (mémoire court terme) est éphémère — seul son transcript
+    // est conservé, quel que soit le chemin de sortie du pipeline.
+    await persistRunTranscript({ scope: SCOPE, sessionId, blackboard })
   }
 }

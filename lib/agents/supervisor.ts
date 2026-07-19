@@ -1,4 +1,6 @@
-import { routeCompletion } from '@/lib/model-router'
+import { parseAgentJSON, callAgentModel, renderMission } from '@/lib/agent-kernel'
+import type { Blackboard } from '@/lib/agent-kernel/blackboard'
+import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { AnalystOutput, SupervisorNotes, SupervisorCheck } from '@/lib/types'
 
 const MIN_TREND_PCT = 80
@@ -8,10 +10,29 @@ const MAX_ODDS = 2.80
 const MIN_PICKS = 2
 const MAX_PICKS = 5
 
+const MISSION: AgentMission = {
+  role: 'supervisor',
+  label: 'le Superviseur',
+  responsibility:
+    "valider strictement la qualité et l'intégrité des picks retenus par l'Analyste avant toute publication — dernier garde-fou du crew.",
+  doesNot: [
+    "Ne sélectionne ni ne modifie aucun pick lui-même — renvoie un feedback à l'Analyste pour révision.",
+    'Ne rédige pas le post Telegram.',
+    'Ne publie jamais rien directement.',
+  ],
+}
+
+export interface SupervisorResult extends SupervisorNotes {
+  feedback_for_analyst?: string
+  lesson_for_memory?: string
+}
+
 export async function runSupervisor(
   analystOutput: AnalystOutput,
-  iteration: number
-): Promise<SupervisorNotes & { feedback_for_analyst?: string }> {
+  iteration: number,
+  blackboard: Blackboard,
+  budget: RunBudget
+): Promise<SupervisorResult> {
   const picks = analystOutput.picks_retenus
   const issues: string[] = []
 
@@ -21,7 +42,6 @@ export async function runSupervisor(
   const oddsOnlyMode = picks.every(p => p.sample_size === 0)
 
   for (const pick of picks) {
-    // En mode cotes-uniquement (sample_size=0), trend_pct et sample_size ne s'appliquent pas
     if (!oddsOnlyMode && pick.trend_pct < MIN_TREND_PCT)
       issues.push(`${pick.home_team}-${pick.away_team} : tendance ${pick.trend_pct}% < ${MIN_TREND_PCT}% requis`)
     if (!oddsOnlyMode && pick.sample_size < MIN_SAMPLE)
@@ -36,11 +56,8 @@ export async function runSupervisor(
 
   if (issues.length > 0) {
     const feedback = `Itération ${iteration} rejetée. Corrections obligatoires :\n${issues.map(i => `• ${i}`).join('\n')}\nSélectionne d'autres matchs ou types de paris qui respectent strictement les critères.`
-    const check: SupervisorCheck = {
-      verdict: 'revision_needed',
-      issues,
-      feedback,
-    }
+    const check: SupervisorCheck = { verdict: 'revision_needed', issues, feedback }
+    blackboard.post({ from: 'supervisor', to: 'analyst', type: 'reflection', content: feedback })
     return {
       checks: [check],
       final_verdict: 'rejected',
@@ -50,24 +67,19 @@ export async function runSupervisor(
     }
   }
 
-  // En mode cotes-uniquement (sample_size=0 partout), auto-approuver si les checks
-  // déterministes passent — pas de données historiques disponibles, c'est voulu
   if (oddsOnlyMode) {
-    const check: SupervisorCheck = {
-      verdict: 'approved',
-      feedback: `Mode cotes-uniquement validé — ${picks.length} picks avec probabilité implicite de marché.`,
-    }
+    const feedback = `Mode cotes-uniquement validé — ${picks.length} picks avec probabilité implicite de marché.`
+    const check: SupervisorCheck = { verdict: 'approved', feedback }
+    blackboard.post({ from: 'supervisor', type: 'decision', content: feedback })
     return { checks: [check], final_verdict: 'approved', iterations: iteration, model_used: 'deterministic-odds-only' }
   }
 
-  // Validation qualitative Claude (mode normal uniquement)
+  // Validation qualitative — seule étape de ce agent qui appelle le modèle.
   const picksText = picks
     .map(p => `${p.home_team} vs ${p.away_team} (${p.competition}) → ${p.bet_type} @ ${p.odds.toFixed(2)} | tendance ${p.trend_pct}% sur ${p.sample_size} matchs`)
     .join('\n')
 
-  const { text: raw } = await routeCompletion(
-    'supervisor',
-    `Tu es le superviseur strict de Kaffi Network. Tu valides la qualité et l'intégrité des picks.
+  const system = `${renderMission(MISSION)}
 
 VÉRIFICATIONS OBLIGATOIRES :
 1. Diversité des compétitions (pas 3 picks dans la même ligue)
@@ -78,8 +90,9 @@ VÉRIFICATIONS OBLIGATOIRES :
 6. Signale tout pick qui semble basé sur des données non vérifiables
 
 Sois STRICT : un doute = revision_needed. Ne valide que ce qui est solide.
-Réponds UNIQUEMENT avec du JSON valide.`,
-    `Valide ce combiné (itération ${iteration}) :
+Réponds UNIQUEMENT avec du JSON valide.`
+
+  const userMessage = `Valide ce combiné (itération ${iteration}) :
 
 ${picksText}
 
@@ -89,35 +102,38 @@ JSON attendu :
 {
   "verdict": "approved" | "revision_needed",
   "issues": ["problèmes si revision_needed"],
-  "feedback": "commentaire bref"
-}`,
-    512
-  )
-  const braceStart = raw.indexOf('{')
-  const braceEnd = raw.lastIndexOf('}')
-  const jsonStr = braceStart !== -1 ? raw.slice(braceStart, braceEnd + 1) : raw
+  "feedback": "commentaire bref",
+  "lesson_for_memory": "optionnel — une leçon durable à retenir pour les prochains runs si tu observes un pattern notable (sinon omets ce champ)"
+}`
 
-  let check: SupervisorCheck
-  try {
-    check = JSON.parse(jsonStr) as SupervisorCheck
-  } catch {
-    // Fail-closed : une réponse superviseur illisible ne doit jamais valider les picks
-    check = {
-      verdict: 'revision_needed',
-      issues: ['Réponse du superviseur illisible (JSON invalide) — validation impossible'],
-      feedback: "Le superviseur n'a pas pu être validé automatiquement, nouvelle tentative requise.",
-    }
+  const { text: raw } = await callAgentModel('supervisor', system, userMessage, 512, blackboard, budget)
+
+  // Fail-closed : une réponse illisible ne doit JAMAIS valider les picks par
+  // défaut — c'est le dernier garde-fou avant publication automatique.
+  const fallback: SupervisorCheck = {
+    verdict: 'revision_needed',
+    issues: ['Réponse du superviseur illisible (JSON invalide) — validation impossible'],
+    feedback: "Le superviseur n'a pas pu être validé automatiquement, nouvelle tentative requise.",
   }
+  const check = parseAgentJSON<SupervisorCheck & { lesson_for_memory?: string }>(raw, fallback)
 
   const feedbackForAnalyst = check.verdict !== 'approved' && check.issues?.length
     ? `Itération ${iteration} rejetée par le superviseur :\n${check.issues.map(i => `• ${i}`).join('\n')}\n${check.feedback ?? ''}`
     : undefined
 
+  blackboard.post({
+    from: 'supervisor',
+    to: check.verdict === 'approved' ? 'all' : 'analyst',
+    type: check.verdict === 'approved' ? 'decision' : 'reflection',
+    content: check.feedback ?? (check.verdict === 'approved' ? 'Approuvé.' : 'Révision demandée.'),
+  })
+
   return {
     checks: [check],
     final_verdict: check.verdict === 'approved' ? 'approved' : 'rejected',
     iterations: iteration,
-    model_used: check.verdict === 'approved' ? 'openrouter' : 'openrouter',
+    model_used: 'openrouter',
     feedback_for_analyst: feedbackForAnalyst,
+    lesson_for_memory: check.lesson_for_memory,
   }
 }

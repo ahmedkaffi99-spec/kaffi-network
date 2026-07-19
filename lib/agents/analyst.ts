@@ -1,8 +1,9 @@
-import { routeCompletion } from '@/lib/model-router'
+import { parseAgentJSON, callAgentModel, renderMission, loadMediumTermDigest } from '@/lib/agent-kernel'
+import type { Blackboard } from '@/lib/agent-kernel/blackboard'
+import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { PlannerOutput, AnalystOutput } from '@/lib/types'
 import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type MatchAnalysisData, type TeamMatchResult } from '@/lib/tools/football-api'
 import { getTodayOdds, findMatchOdds, type MatchOdds } from '@/lib/tools/odds-api'
-import { getAllPerformance, formatMemoryContext } from '@/lib/tools/memory'
 import { checkTeamNews } from '@/lib/tools/serper'
 
 const MIN_TREND_PCT = 80
@@ -11,42 +12,23 @@ const MIN_ODDS = 1.35
 const MAX_ODDS = 2.80
 const MAX_PICKS = 5
 
+const MISSION: AgentMission = {
+  role: 'analyst',
+  label: "l'Analyste",
+  responsibility:
+    'sélectionner les picks football à haute valeur statistique à partir des données fournies (API-Football, cotes, actualités), en respectant strictement les seuils de tendance et de cote.',
+  doesNot: [
+    'Ne planifie pas les compétitions/focus du jour — délégué au Planner.',
+    'Ne valide pas la qualité finale du combiné — délégué au Superviseur.',
+    "Ne rédige pas le post Telegram — délégué au Writer.",
+    "N'invente jamais une statistique non présente dans les données fournies.",
+  ],
+}
+
 function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) => boolean): { pct: number; count: number } {
   if (!history.length) return { pct: 0, count: 0 }
   const matching = history.filter(predicate).length
   return { pct: Math.round((matching / history.length) * 100), count: history.length }
-}
-
-function extractJson(text: string): string {
-  // Essaie d'abord un bloc ```json ... ```
-  const fenceMatch = text.match(/```json?\s*([\s\S]*?)```/)
-  if (fenceMatch) return fenceMatch[1].trim()
-
-  // Cherche le premier { et le dernier } correspondant (niveau racine)
-  const braceStart = text.indexOf('{')
-  if (braceStart === -1) return text.trim()
-
-  let depth = 0
-  let inString = false
-  let escape = false
-  let end = -1
-
-  for (let i = braceStart; i < text.length; i++) {
-    const ch = text[i]
-    if (escape) { escape = false; continue }
-    if (ch === '\\' && inString) { escape = true; continue }
-    if (ch === '"') { inString = !inString; continue }
-    if (inString) continue
-    if (ch === '{') depth++
-    else if (ch === '}') { depth--; if (depth === 0) { end = i; break } }
-  }
-
-  if (end !== -1) return text.slice(braceStart, end + 1)
-  // JSON tronqué — tente de le fermer
-  const partial = text.slice(braceStart)
-  const opens = (partial.match(/\{/g) ?? []).length
-  const closes = (partial.match(/\}/g) ?? []).length
-  return partial + '}'.repeat(Math.max(0, opens - closes))
 }
 
 function oddsLines(matchOdds: MatchOdds): string[] {
@@ -64,15 +46,27 @@ function oddsLines(matchOdds: MatchOdds): string[] {
   return lines
 }
 
-export async function runAnalyst(
-  plannerOutput: PlannerOutput,
-  supervisorFeedback?: string
-): Promise<AnalystOutput> {
-  // Récupère odds et perf en parallèle — ces appels ne dépendent pas d'API-Football
-  const [odds, performance] = await Promise.all([getTodayOdds(), getAllPerformance()])
-  const memoryContext = formatMemoryContext(performance)
+export interface AnalystContext {
+  enriched: string[]
+  oddsOnlyMode: boolean
+  memoryContext: string
+}
 
-  // Tente de récupérer les matchs et l'historique via API-Football
+/**
+ * Phase de PERCEPTION — tous les appels d'outils coûteux (API-Football
+ * rate-limitée à 7s/appel, cotes, actualités). Exécutée UNE SEULE FOIS par
+ * run et réutilisée à chaque itération de raisonnement : avant cette
+ * séparation, une révision demandée par le Superviseur relançait tout ce
+ * scan (jusqu'à ~2min de sleeps rate-limit en plus par itération), ce qui
+ * interdisait d'augmenter le budget d'itérations sans risquer le timeout
+ * Vercel (300s).
+ */
+export async function gatherAnalystContext(
+  plannerOutput: PlannerOutput,
+  blackboard: Blackboard
+): Promise<AnalystContext> {
+  const [odds, memoryContext] = await Promise.all([getTodayOdds(), loadMediumTermDigest()])
+
   let analysisData: MatchAnalysisData[] = []
   let oddsOnlyMode = false
 
@@ -86,7 +80,6 @@ export async function runAnalyst(
     oddsOnlyMode = true
   }
 
-  // Fallback : si pas de données API-Football, utilise les matchs de The Odds API directement
   if (analysisData.length === 0) {
     oddsOnlyMode = true
   }
@@ -94,7 +87,6 @@ export async function runAnalyst(
   const enriched: string[] = []
 
   if (!oddsOnlyMode) {
-    // ── Mode complet : stats API-Football + cotes ─────────────────────────────
     for (const { match, home_team_last_matches, away_team_last_matches } of analysisData) {
       const matchOdds = findMatchOdds(odds, match.home_team.name, match.away_team.name)
       if (!matchOdds) continue
@@ -102,18 +94,16 @@ export async function runAnalyst(
       const homeH = home_team_last_matches
       const awayH = away_team_last_matches
 
-      const homeOver25  = calcTrend(homeH, m => m.total_goals > 2.5)
-      const awayOver25  = calcTrend(awayH, m => m.total_goals > 2.5)
+      const homeOver25 = calcTrend(homeH, m => m.total_goals > 2.5)
+      const awayOver25 = calcTrend(awayH, m => m.total_goals > 2.5)
       const homeUnder25 = calcTrend(homeH, m => m.total_goals < 2.5)
-      const awayUnder25 = calcTrend(awayH, m => m.total_goals < 2.5)
-      const homeBtts    = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
-      const awayBtts    = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
-      const homeWins    = calcTrend(homeH, m => m.result === 'W' && m.home)
+      const awayBtts = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
+      const homeBtts = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
+      const homeWins = calcTrend(homeH, m => m.result === 'W' && m.home)
 
       const lines = oddsLines(matchOdds)
       if (!lines.length) continue
 
-      // Serper = contexte qualitatif UNIQUEMENT (blessures, suspensions, forfaits)
       const [homeNews, awayNews] = await Promise.all([
         checkTeamNews(match.home_team.name),
         checkTeamNews(match.away_team.name),
@@ -121,14 +111,12 @@ export async function runAnalyst(
 
       enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
 Domicile ${match.home_team.name} (${homeH.length} matchs): over2.5=${homeOver25.pct}%, under2.5=${homeUnder25.pct}%, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%
-Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, under2.5=${awayUnder25.pct}%, btts=${awayBtts.pct}%
+Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, btts=${awayBtts.pct}%
 Actualités ${match.home_team.name}: ${homeNews}
 Actualités ${match.away_team.name}: ${awayNews}
 Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
     }
   } else {
-    // ── Mode fallback cotes uniquement (API-Football quota épuisé) ────────────
-    // The Odds API reste disponible — on utilise ses matchs + la probabilité implicite des cotes
     for (const event of odds.slice(0, 20)) {
       const lines = oddsLines(event)
       if (!lines.length) continue
@@ -138,10 +126,9 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
         checkTeamNews(event.away_team),
       ])
 
-      // Probabilité implicite = 1/cote × 100, arrondie à l'entier
       const impliedProbs = lines.map(l => {
-        const odds = parseFloat(l.split(': ')[1])
-        return `${l} (prob. implicite: ${Math.round((1 / odds) * 100)}%)`
+        const oddsVal = parseFloat(l.split(': ')[1])
+        return `${l} (prob. implicite: ${Math.round((1 / oddsVal) * 100)}%)`
       })
 
       enriched.push(`MATCH: ${event.home_team} vs ${event.away_team} — ${event.commence_time}
@@ -152,6 +139,30 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${im
     }
   }
 
+  blackboard.post({
+    from: 'analyst',
+    type: 'observation',
+    content: `${enriched.length} matchs analysés (mode ${oddsOnlyMode ? 'cotes seules' : 'complet'}).`,
+  })
+
+  return { enriched, oddsOnlyMode, memoryContext }
+}
+
+/**
+ * Phase de RAISONNEMENT — un appel modèle par itération, réutilisant le
+ * contexte déjà perçu. C'est ici que se joue plan → décision : le prompt
+ * demande explicitement au modèle d'exposer sa stratégie (`plan`) avant sa
+ * sélection finale, dans le même appel (pas d'aller-retour supplémentaire).
+ */
+export async function reasonAnalystPicks(
+  plannerOutput: PlannerOutput,
+  context: AnalystContext,
+  supervisorFeedback: string | undefined,
+  blackboard: Blackboard,
+  budget: RunBudget
+): Promise<AnalystOutput> {
+  const { enriched, oddsOnlyMode, memoryContext } = context
+
   if (!enriched.length) {
     return {
       picks_retenus: [],
@@ -161,8 +172,16 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${im
     }
   }
 
+  const mission = renderMission(MISSION)
+  const longTermMemory = blackboard.read<string>('longTermMemory') ?? 'Aucune leçon long terme enregistrée.'
+
   const systemPrompt = oddsOnlyMode
-    ? `Tu es l'analyste expert de Kaffi Network. Les données historiques API-Football sont temporairement indisponibles.
+    ? `${mission}
+
+MÉMOIRE LONG TERME (leçons des runs précédents) :
+${longTermMemory}
+
+Les données historiques API-Football sont temporairement indisponibles.
 Tu travailles en MODE COTES UNIQUEMENT : les cotes de marché (bookmakers agrégés) sont ta seule source quantitative.
 
 RÈGLES EN MODE COTES :
@@ -177,6 +196,7 @@ ${supervisorFeedback ? `FEEDBACK SUPERVISEUR :\n${supervisorFeedback}\n` : ''}
 
 Réponds UNIQUEMENT avec un objet JSON valide :
 {
+  "plan": "string (stratégie suivie pour cette sélection, 1 phrase)",
   "picks_retenus": [
     {
       "competition": "string",
@@ -193,7 +213,7 @@ Réponds UNIQUEMENT avec un objet JSON valide :
   "picks_rejetés": [{ "match": "string", "competition": "string", "bet_type": "string", "raison": "string" }],
   "summary": "string"
 }`
-    : `Tu es l'analyste expert de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
+    : `${mission}
 
 SOURCES DE DONNÉES :
 - API-Football (champs Domicile/Extérieur avec %) : SEULE source pour les statistiques chiffrées.
@@ -205,11 +225,13 @@ RÈGLES ABSOLUES :
 3. Maximum ${MAX_PICKS} picks
 4. Blessure/suspension clé détectée = pick rejeté
 
-MÉMOIRE : ${memoryContext || 'Aucun historique.'}
+MÉMOIRE MOYEN TERME (30 derniers jours) : ${memoryContext || 'Aucun historique.'}
+MÉMOIRE LONG TERME (leçons des runs précédents) : ${longTermMemory}
 ${supervisorFeedback ? `\nFEEDBACK SUPERVISEUR :\n${supervisorFeedback}` : ''}
 
 Réponds UNIQUEMENT JSON :
 {
+  "plan": "string (stratégie suivie pour cette sélection, 1 phrase)",
   "picks_retenus": [
     { "competition": "string", "home_team": "string", "away_team": "string", "match_datetime": "ISO 8601",
       "bet_type": "string", "odds": number, "trend_label": "string", "trend_pct": number, "sample_size": number }
@@ -224,28 +246,21 @@ Contexte : ${plannerOutput.context}
 Données des matchs :
 ${enriched.join('\n\n')}`
 
-  const { text, model_used } = await routeCompletion('analyst', systemPrompt, userMessage, 4096)
-  const jsonStr = extractJson(text)
+  const { text, model_used } = await callAgentModel('analyst', systemPrompt, userMessage, 4096, blackboard, budget)
 
-  try {
-    const parsed = JSON.parse(jsonStr) as AnalystOutput
-
-    const validPicks = oddsOnlyMode
-      ? parsed.picks_retenus.filter(p => p.odds >= MIN_ODDS && p.odds <= MAX_ODDS)
-      : parsed.picks_retenus.filter(p =>
-          p.trend_pct >= MIN_TREND_PCT &&
-          p.sample_size >= MIN_SAMPLE &&
-          p.odds >= MIN_ODDS &&
-          p.odds <= MAX_ODDS
-        )
-
-    return { ...parsed, picks_retenus: validPicks, model_used }
-  } catch {
-    return {
-      picks_retenus: [],
-      picks_rejetés: [],
-      summary: "Erreur de parsing JSON dans la réponse de l'analyste.",
-      model_used,
-    }
+  const fallback: AnalystOutput = {
+    picks_retenus: [],
+    picks_rejetés: [],
+    summary: "Erreur de parsing JSON dans la réponse de l'analyste.",
+    model_used,
   }
+  const parsed = parseAgentJSON<AnalystOutput>(text, fallback)
+
+  const validPicks = oddsOnlyMode
+    ? parsed.picks_retenus.filter(p => p.odds >= MIN_ODDS && p.odds <= MAX_ODDS)
+    : parsed.picks_retenus.filter(
+        p => p.trend_pct >= MIN_TREND_PCT && p.sample_size >= MIN_SAMPLE && p.odds >= MIN_ODDS && p.odds <= MAX_ODDS
+      )
+
+  return { ...parsed, picks_retenus: validPicks, model_used }
 }

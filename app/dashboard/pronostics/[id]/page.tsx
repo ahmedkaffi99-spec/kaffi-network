@@ -2,7 +2,16 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Header } from '@/components/Header'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
-import type { PronosticSession, Pick } from '@/lib/types'
+import type { PronosticSession, Pick, AgentMessageRow } from '@/lib/types'
+
+const MESSAGE_TYPE_STYLES: Record<string, string> = {
+  observation: 'text-blue-400',
+  plan: 'text-purple-400',
+  decision: 'text-gold-400',
+  reflection: 'text-amber-400',
+  action: 'text-emerald-400',
+  result: 'text-gray-400',
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -23,17 +32,21 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
   const { id } = await params
   const supabase = await createClient()
 
-  const { data } = await supabase
-    .from('pronostic_sessions')
-    .select('*, picks(*)')
-    .eq('id', id)
-    .single()
+  const [{ data }, { data: agentMessages }] = await Promise.all([
+    supabase.from('pronostic_sessions').select('*, picks(*)').eq('id', id).single(),
+    supabase
+      .from('agent_messages')
+      .select('*')
+      .eq('session_id', id)
+      .order('created_at', { ascending: true }),
+  ])
 
   if (!data) notFound()
 
   const session = data as PronosticSession
   const picks = (session.picks ?? []) as Pick[]
   const analystOutput = session.analyst_output
+  const messages = (agentMessages ?? []) as AgentMessageRow[]
 
   return (
     <div>
@@ -105,6 +118,9 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
               <h2 className="font-semibold text-white text-sm">Résumé analyste</h2>
             </CardHeader>
             <CardBody>
+              {analystOutput.plan && (
+                <p className="text-gray-500 text-xs italic mb-2">Plan : {analystOutput.plan}</p>
+              )}
               <p className="text-gray-300 text-sm leading-relaxed">{analystOutput.summary}</p>
               {analystOutput.picks_rejetés?.length > 0 && (
                 <div className="mt-4">
@@ -162,6 +178,31 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
           <Card>
             <CardHeader><h2 className="font-semibold text-white text-sm">Notes</h2></CardHeader>
             <CardBody><p className="text-gray-400 text-sm">{session.notes}</p></CardBody>
+          </Card>
+        )}
+
+        {/* Journal des agents — communication inter-agents (blackboard) */}
+        {messages.length > 0 && (
+          <Card>
+            <CardHeader>
+              <h2 className="font-semibold text-white text-sm">Journal des agents</h2>
+            </CardHeader>
+            <CardBody className="space-y-2">
+              {messages.map(msg => (
+                <div key={msg.id} className="flex items-start gap-3 text-sm py-1.5 border-b border-navy-700/30 last:border-0">
+                  <span className="text-xs text-gray-600 mt-0.5 flex-shrink-0 font-mono">
+                    {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                  <span className="text-xs text-gray-500 flex-shrink-0 w-24">
+                    {msg.from_role}{msg.to_role ? ` → ${msg.to_role}` : ''}
+                  </span>
+                  <span className={`text-xs uppercase tracking-wide flex-shrink-0 w-20 ${MESSAGE_TYPE_STYLES[msg.type] ?? 'text-gray-400'}`}>
+                    {msg.type}
+                  </span>
+                  <span className="text-gray-300 flex-1">{msg.content}</span>
+                </div>
+              ))}
+            </CardBody>
           </Card>
         )}
       </div>
