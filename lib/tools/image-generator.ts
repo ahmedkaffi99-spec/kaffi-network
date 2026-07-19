@@ -2,11 +2,16 @@ import satori from 'satori'
 import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
 
-// Charge la police Inter depuis Google Fonts (mis en cache par le runtime)
+// Charge Inter en TTF (Satori ne supporte pas woff2 sur ce runtime)
 async function loadFont(): Promise<ArrayBuffer> {
-  const url = 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2'
-  const res = await fetch(url)
-  return res.arrayBuffer()
+  // Demande le CSS avec un ancien User-Agent pour forcer le format TTF
+  const css = await fetch('https://fonts.googleapis.com/css2?family=Inter:wght@400', {
+    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)' },
+  }).then(r => r.text())
+
+  const match = css.match(/url\(([^)]+\.ttf)\)/)
+  const ttfUrl = match?.[1] ?? 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfMZg.ttf'
+  return fetch(ttfUrl).then(r => r.arrayBuffer())
 }
 
 export async function generateTicketImage(

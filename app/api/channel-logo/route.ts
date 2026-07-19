@@ -3,10 +3,12 @@ import satori from 'satori'
 import sharp from 'sharp'
 
 async function loadFont(): Promise<ArrayBuffer> {
-  const res = await fetch(
-    'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2'
-  )
-  return res.arrayBuffer()
+  const css = await fetch('https://fonts.googleapis.com/css2?family=Inter:wght@700', {
+    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)' },
+  }).then(r => r.text())
+  const match = css.match(/url\(([^)]+\.ttf)\)/)
+  const ttfUrl = match?.[1] ?? 'https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfMZg.ttf'
+  return fetch(ttfUrl).then(r => r.arrayBuffer())
 }
 
 export async function GET() {
