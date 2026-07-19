@@ -9,11 +9,11 @@ import { Button } from '@/components/ui/Button'
 import type { PronosticSession, DashboardStats } from '@/lib/types'
 
 interface Props {
-  todaySession: PronosticSession | null
+  todaySessions: PronosticSession[]
   stats: DashboardStats
 }
 
-export function DashboardClient({ todaySession, stats }: Props) {
+export function DashboardClient({ todaySessions, stats }: Props) {
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
   const [genResult, setGenResult] = useState<string | null>(null)
@@ -63,10 +63,10 @@ export function DashboardClient({ todaySession, stats }: Props) {
           <Button
             variant="primary"
             size="md"
-            disabled={generating || !!todaySession}
+            disabled={generating || todaySessions.length >= 3}
             onClick={handleGenerate}
           >
-            {generating ? '⏳ Génération...' : todaySession ? '✓ Session du jour générée' : '⚡ Générer les picks'}
+            {generating ? '⏳ Génération...' : todaySessions.length >= 3 ? '✓ Les 3 paliers du jour sont générés' : '⚡ Générer les picks'}
           </Button>
         }
       />
@@ -94,15 +94,19 @@ export function DashboardClient({ todaySession, stats }: Props) {
 
         <div>
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Session du jour
+            Combinés du jour
           </h2>
-          {todaySession ? (
-            <SessionCard session={todaySession} onApprove={handleApprove} onPublish={handlePublish} />
+          {todaySessions.length ? (
+            <div className="space-y-4">
+              {todaySessions.map(session => (
+                <SessionCard key={session.id} session={session} onApprove={handleApprove} onPublish={handlePublish} />
+              ))}
+            </div>
           ) : (
             <div className="flex items-center gap-4 p-6 bg-navy-800/40 border border-dashed border-navy-600/50 rounded-2xl">
               <div className="w-12 h-12 rounded-xl bg-navy-700/60 flex items-center justify-center text-2xl">⚡</div>
               <div>
-                <div className="text-white font-medium">Aucune session générée aujourd&apos;hui</div>
+                <div className="text-white font-medium">Aucun combiné généré aujourd&apos;hui</div>
                 <div className="text-sm text-gray-500 mt-0.5">Clique sur &ldquo;Générer les picks&rdquo; pour lancer l&apos;analyse.</div>
               </div>
             </div>

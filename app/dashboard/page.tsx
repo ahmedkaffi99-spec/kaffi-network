@@ -8,14 +8,12 @@ export default async function DashboardPage() {
   const supabase = await createClient()
   const today = new Date().toISOString().split('T')[0]
 
-  const [{ data: todaySession }, { data: sessions }, { data: picks }] = await Promise.all([
+  const [{ data: todaySessions }, { data: sessions }, { data: picks }] = await Promise.all([
     supabase
       .from('pronostic_sessions')
       .select('*, picks(*)')
       .eq('date', today)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .order('tier', { ascending: true }),
     supabase
       .from('pronostic_sessions')
       .select('id, date, status, combined_odds, picks(result)')
@@ -67,5 +65,5 @@ export default async function DashboardPage() {
     roi_this_month: roi,
   }
 
-  return <DashboardClient todaySession={todaySession as PronosticSession | null} stats={stats} />
+  return <DashboardClient todaySessions={(todaySessions ?? []) as PronosticSession[]} stats={stats} />
 }

@@ -3,13 +3,17 @@ const SPORT = 'soccer'
 
 interface OddsOutcome { name: string; price: number }
 interface OddsMarket { key: string; outcomes: OddsOutcome[] }
+interface OddsBookmaker { key: string; title: string; markets: OddsMarket[] }
 interface OddsEvent {
   id: string
   home_team: string
   away_team: string
   commence_time: string
-  bookmakers: Array<{ markets: OddsMarket[] }>
+  bookmakers: OddsBookmaker[]
 }
+
+// Bookmaker prioritaire pour la cote finale — cohérence avec le lien affilié.
+const PRIORITY_BOOKMAKER_KEY = '1xbet'
 
 export interface MatchOdds {
   home_team: string
@@ -69,8 +73,36 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   })
 }
 
+// Cache en mémoire du process — évite de refaire un fetch par pick candidat
+// quand l'Odds Selector interroge plusieurs matchs du même run.
+let rawEventsCache: { data: OddsEvent[]; fetchedAt: number } | null = null
+const RAW_CACHE_TTL_MS = 5 * 60 * 1000
+
+async function fetchRawOddsEvents(region = 'eu'): Promise<OddsEvent[]> {
+  if (rawEventsCache && Date.now() - rawEventsCache.fetchedAt < RAW_CACHE_TTL_MS) {
+    return rawEventsCache.data
+  }
+
+  const url = new URL(`${BASE_URL}/sports/${SPORT}/odds`)
+  url.searchParams.set('apiKey', process.env.ODDS_API_KEY!)
+  url.searchParams.set('regions', region)
+  url.searchParams.set('markets', 'h2h,totals')
+  url.searchParams.set('oddsFormat', 'decimal')
+  url.searchParams.set('dateFormat', 'iso')
+
+  const res = await fetch(url.toString(), { cache: 'no-store' })
+  if (!res.ok) {
+    console.warn(`Odds API ${res.status} — cotes brutes indisponibles`)
+    return []
+  }
+
+  const data = (await res.json()) as OddsEvent[]
+  rawEventsCache = { data, fetchedAt: Date.now() }
+  return data
+}
+
 // Similarité par mots communs (robuste aux abréviations et variantes de noms)
-function teamSimilarity(a: string, b: string): number {
+export function teamSimilarity(a: string, b: string): number {
   const normalize = (s: string) =>
     s.toLowerCase()
       .replace(/[^a-z0-9 ]/g, '')
@@ -107,3 +139,64 @@ export function findMatchOdds(
 
   return best
 }
+
+// ─── Cotes brutes par bookmaker (Odds Selector) ────────────────────────────
+
+export interface BookmakerQuote {
+  bookmaker: string // clé The Odds API (ex: '1xbet', 'pinnacle')
+  price: number
+}
+
+// Reconnaît le marché/l'issue ciblés par un bet_type texte libre — même
+// heuristique que lib/tools/result-checker.ts::evaluateResult (FR + EN, le
+// Rédacteur/Analyste ne phrase pas toujours identiquement).
+function matchOutcome(
+  betType: string,
+  homeTeam: string,
+  awayTeam: string
+): { marketKey: string; matches: (outcomeName: string) => boolean } | null {
+  const bt = betType.toLowerCase()
+
+  if (bt.includes('plus de 2.5') || bt.includes('over 2.5')) {
+    return { marketKey: 'totals', matches: n => n.toLowerCase().includes('over') }
+  }
+  if (bt.includes('moins de 2.5') || bt.includes('under 2.5')) {
+    return { marketKey: 'totals', matches: n => n.toLowerCase().includes('under') }
+  }
+  if (bt.includes('victoire') && (bt.includes('domicile') || bt.includes('home'))) {
+    return { marketKey: 'h2h', matches: n => teamSimilarity(n, homeTeam) >= 0.3 }
+  }
+  if (bt.includes('victoire') && (bt.includes('extérieur') || bt.includes('exterieur') || bt.includes('away'))) {
+    return { marketKey: 'h2h', matches: n => teamSimilarity(n, awayTeam) >= 0.3 }
+  }
+
+  // BTTS et autres marchés non couverts par le plan gratuit The Odds API
+  return null
+}
+
+/**
+ * Détail des cotes par bookmaker pour un pick candidat donné — utilisé par
+ * l'Odds Selector pour choisir la cote 1xBet en priorité, sinon la médiane,
+ * et détecter un marché trop incertain (écart entre bookmakers).
+ */
+export async function getBookmakerQuotes(homeTeam: string, awayTeam: string, betType: string): Promise<BookmakerQuote[]> {
+  const outcome = matchOutcome(betType, homeTeam, awayTeam)
+  if (!outcome) return []
+
+  const events = await fetchRawOddsEvents()
+  const THRESHOLD = 0.3
+  const event = events.find(
+    e => teamSimilarity(e.home_team, homeTeam) >= THRESHOLD && teamSimilarity(e.away_team, awayTeam) >= THRESHOLD
+  )
+  if (!event) return []
+
+  const quotes: BookmakerQuote[] = []
+  for (const bookmaker of event.bookmakers) {
+    const market = bookmaker.markets.find(m => m.key === outcome.marketKey)
+    const outcomeEntry = market?.outcomes.find(o => outcome.matches(o.name))
+    if (outcomeEntry) quotes.push({ bookmaker: bookmaker.key, price: outcomeEntry.price })
+  }
+  return quotes
+}
+
+export { PRIORITY_BOOKMAKER_KEY }

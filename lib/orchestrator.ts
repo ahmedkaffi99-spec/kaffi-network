@@ -1,159 +1,118 @@
 import { adminSupabase } from '@/lib/supabase/admin'
 import { runPlanner } from '@/lib/agents/planner'
 import { gatherAnalystContext, reasonAnalystPicks } from '@/lib/agents/analyst'
+import { decide as decideOdds } from '@/lib/agents/odds-selector'
 import { runWriter } from '@/lib/agents/writer'
-import { runSupervisor } from '@/lib/agents/supervisor'
+import { reviewTier, type SupervisorTierResult } from '@/lib/agents/supervisor'
 import { checkDuplicates, savePublishedMatches } from '@/lib/tools/duplicate-checker'
 import { generateTicketImage } from '@/lib/tools/image-generator'
-import { formatCombinePost, sendPhoto } from '@/lib/tools/telegram'
-import { Blackboard, createBudget, budgetExceeded, loadLongTermDigest, persistLongTermLesson, persistRunTranscript } from '@/lib/agent-kernel'
+import { sendPhoto } from '@/lib/tools/telegram'
+import { Blackboard, createBudget, loadLongTermDigest, persistLongTermLesson, persistRunTranscript } from '@/lib/agent-kernel'
+import type { Tier, TierCombo } from '@/lib/types'
 
 // Identifie ce crew dans la mémoire long terme et le journal des agents —
 // le kernel (lib/agent-kernel) est générique, ce pipeline foot n'en est
 // qu'une instance parmi d'autres futurs "crews" possibles.
 const SCOPE = 'pronostics-foot'
+const ALL_TIERS: Tier[] = ['prudent', 'equilibre', 'audacieux']
+// Un palier rejeté ne fait retenter que le Rédacteur (borné) — la
+// composition du combo, elle, est déterministe et n'a rien à "revoir".
+const MAX_WRITER_ATTEMPTS = 3
 
-export interface OrchestratorResult {
+export interface TierResult {
+  tier: Tier
   success: boolean
-  sessionId?: string
   message: string
-  picksCount?: number
+  sessionId?: string
   combinedOdds?: number
+  picksCount?: number
   telegramMsgId?: string
 }
 
-export async function runPipeline(date?: string): Promise<OrchestratorResult> {
-  const targetDate = date ?? new Date().toISOString().split('T')[0]
+export interface OrchestratorResult {
+  success: boolean
+  message: string
+  tiers: TierResult[]
+}
 
-  // Vérifie si une session publiée existe déjà pour ce jour
+async function publishTier(params: {
+  date: string
+  combo: TierCombo
+  blackboard: Blackboard
+  budget: ReturnType<typeof createBudget>
+}): Promise<TierResult> {
+  const { date, combo, blackboard, budget } = params
+  const { tier } = combo
+
   const { data: existing } = await adminSupabase
     .from('pronostic_sessions')
     .select('id, status')
-    .eq('date', targetDate)
+    .eq('date', date)
+    .eq('tier', tier)
     .eq('status', 'published')
     .maybeSingle()
 
   if (existing) {
-    return { success: false, sessionId: existing.id, message: 'Session déjà publiée pour ce jour.' }
+    return { tier, success: false, sessionId: existing.id, message: `Palier ${tier} déjà publié pour ce jour.` }
   }
 
-  // Upsert sur la date : réinitialise la session si elle existe déjà (draft/rejected)
   const { data: session, error: sessionError } = await adminSupabase
     .from('pronostic_sessions')
-    .upsert(
-      { date: targetDate, status: 'draft', iterations: 0 },
-      { onConflict: 'date', ignoreDuplicates: false }
-    )
+    .upsert({ date, tier, status: 'draft', iterations: 0 }, { onConflict: 'date,tier', ignoreDuplicates: false })
     .select()
     .single()
 
   if (sessionError || !session) {
-    return { success: false, message: `Erreur création session : ${sessionError?.message}` }
+    return { tier, success: false, message: `Erreur création session (${tier}) : ${sessionError?.message}` }
   }
 
   const sessionId = session.id as string
-  const blackboard = new Blackboard(crypto.randomUUID())
-  // Boucle bornée et prévisible : plafond d'itérations ET budget d'appels
-  // modèle/temps, pour rester compatible avec le timeout Vercel (300s) même
-  // si la boucle de révision analyste ⇄ superviseur va au bout.
-  const budget = createBudget({ maxIterations: 3, maxModelCalls: 12, deadlineMs: 260_000 })
 
   try {
-    const longTermDigest = await loadLongTermDigest(SCOPE)
-    blackboard.write('longTermMemory', longTermDigest)
+    let writerOutput = ''
+    let review: SupervisorTierResult = { verdict: 'revision_needed', issues: [] }
+    let attempt = 0
 
-    // ── Étape 1 : Planner ────────────────────────────────────────────────────
-    const plannerOutput = await runPlanner(targetDate, blackboard, budget)
+    while (attempt < MAX_WRITER_ATTEMPTS) {
+      attempt++
+      writerOutput = await runWriter(combo, date, blackboard, budget)
+      review = await reviewTier(combo, writerOutput, blackboard, budget)
+      if (review.verdict === 'approved') break
+    }
+
     await adminSupabase
       .from('pronostic_sessions')
-      .update({ planner_output: plannerOutput })
-      .eq('id', sessionId)
-
-    // ── Étape 2 : Perception — une seule fois, réutilisée à chaque itération ─
-    const analystContext = await gatherAnalystContext(plannerOutput, blackboard)
-
-    // ── Étape 3 : Analyst ⇄ Supervisor avec feedback itératif, budget-aware ──
-    let analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, undefined, blackboard, budget)
-    blackboard.post({
-      from: 'analyst',
-      to: 'supervisor',
-      type: 'decision',
-      content: `${analystOutput.picks_retenus.length} picks retenus — ${analystOutput.summary}`,
-    })
-
-    let supervisorResult = await runSupervisor(analystOutput, 1, blackboard, budget)
-    let iteration = 1
-
-    while (supervisorResult.final_verdict === 'rejected' && iteration < budget.maxIterations) {
-      const exceeded = budgetExceeded(budget, blackboard)
-      if (exceeded) {
-        blackboard.post({ from: 'supervisor', type: 'decision', content: `Arrêt anticipé de la révision — ${exceeded}.` })
-        break
-      }
-      iteration++
-      analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, supervisorResult.feedback_for_analyst, blackboard, budget)
-      blackboard.post({
-        from: 'analyst',
-        to: 'supervisor',
-        type: 'decision',
-        content: `Itération ${iteration} — ${analystOutput.picks_retenus.length} picks révisés.`,
+      .update({
+        writer_output: writerOutput,
+        supervisor_notes: { checks: [review], final_verdict: review.verdict === 'approved' ? 'approved' : 'rejected', iterations: attempt },
+        iterations: attempt,
       })
-      supervisorResult = await runSupervisor(analystOutput, iteration, blackboard, budget)
-    }
-
-    const supervisorNotes = {
-      checks: supervisorResult.checks,
-      final_verdict: supervisorResult.final_verdict,
-      iterations: supervisorResult.iterations,
-      model_used: supervisorResult.model_used,
-    }
-
-    await adminSupabase
-      .from('pronostic_sessions')
-      .update({ analyst_output: analystOutput, supervisor_notes: supervisorNotes, iterations: iteration })
       .eq('id', sessionId)
 
-    if (supervisorResult.lesson_for_memory) {
-      await persistLongTermLesson(SCOPE, `lesson-${sessionId}`, supervisorResult.lesson_for_memory)
+    if (review.lesson_for_memory) {
+      await persistLongTermLesson(SCOPE, `lesson-${sessionId}`, review.lesson_for_memory)
     }
 
-    const picks = analystOutput.picks_retenus
-
-    // La décision du superviseur doit réellement bloquer la publication —
-    // pas seulement l'absence de picks. Avant, un rejet persistant après la
-    // dernière itération n'empêchait pas la publication tant que la liste de
-    // picks n'était pas vide.
-    if (!picks.length || supervisorResult.final_verdict !== 'approved') {
-      const notes = picks.length
-        ? 'Combiné rejeté par le superviseur après les itérations de révision disponibles.'
-        : "Aucun pick retenu par l'analyste."
+    if (review.verdict !== 'approved') {
+      const notes = `Palier ${tier} rejeté par le superviseur après ${attempt} tentative(s) de rédaction.`
       await adminSupabase.from('pronostic_sessions').update({ status: 'rejected', notes }).eq('id', sessionId)
-      return { success: false, sessionId, message: notes }
+      return { tier, success: false, sessionId, message: notes }
     }
 
-    // ── Étape 4 : Duplicate checker ──────────────────────────────────────────
-    const { ok, duplicates } = await checkDuplicates(picks, sessionId)
+    // ── Duplicate checker (par palier — les picks sont partagés entre paliers) ─
+    const { ok, duplicates } = await checkDuplicates(combo.picks, tier)
     if (!ok) {
-      blackboard.post({ from: 'orchestrator', type: 'decision', content: `Publication bloquée — doublons : ${duplicates.join(', ')}` })
+      blackboard.post({ from: 'orchestrator', type: 'decision', content: `Palier ${tier} bloqué — doublons : ${duplicates.join(', ')}` })
       await adminSupabase
         .from('pronostic_sessions')
         .update({ status: 'rejected', notes: `Doublons détectés : ${duplicates.join(', ')}` })
         .eq('id', sessionId)
-      return { success: false, sessionId, message: `Picks déjà publiés : ${duplicates.join(', ')}` }
+      return { tier, success: false, sessionId, message: `Palier ${tier} — picks déjà publiés : ${duplicates.join(', ')}` }
     }
 
-    // ── Étape 5 : Writer ─────────────────────────────────────────────────────
-    const writerOutput = await runWriter(analystOutput, targetDate, blackboard, budget)
-    await adminSupabase
-      .from('pronostic_sessions')
-      .update({ writer_output: writerOutput })
-      .eq('id', sessionId)
-
-    // ── Étape 6 : Sauvegarde des picks ───────────────────────────────────────
-    const combinedOdds = picks.reduce((acc, p) => acc * p.odds, 1)
-
+    // ── Sauvegarde des picks ─────────────────────────────────────────────────
     const { error: picksError } = await adminSupabase.from('picks').insert(
-      picks.map(p => ({
+      combo.picks.map(p => ({
         session_id: sessionId,
         competition: p.competition,
         home_team: p.home_team,
@@ -167,61 +126,121 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
         was_rejected: false,
       }))
     )
+    if (picksError) throw new Error(`Erreur insertion picks (${tier}) : ${picksError.message}`)
 
-    if (picksError) throw new Error(`Erreur insertion picks : ${picksError.message}`)
+    // ── Image ticket + envoi Telegram — le post envoyé est celui validé par
+    //    le Superviseur (writerOutput), pas une reformulation déterministe ──
+    const imageBuffer = await generateTicketImage(combo.picks, combo.combined_odds, date)
+    const telegramMsgId = await sendPhoto(imageBuffer, writerOutput)
+    blackboard.post({ from: 'orchestrator', type: 'action', content: `Palier ${tier} publié sur Telegram — message #${telegramMsgId}.` })
 
-    // ── Étape 7 : Scanner anti-arnaque avant publication ─────────────────────
-    const FORBIDDEN = ['garanti', 'garantine', 'sûr à 100', '100% sûr', 'certain à 100', 'infaillible', 'sans risque', 'gagné d\'avance', 'coup sûr']
-    const writerLower = writerOutput.toLowerCase()
-    const forbidden = FORBIDDEN.filter(w => writerLower.includes(w.toLowerCase()))
-    if (forbidden.length > 0) {
-      console.warn(`[orchestrator] 🚫 Mots interdits détectés dans le post : ${forbidden.join(', ')}`)
-      blackboard.post({ from: 'orchestrator', type: 'decision', content: `Publication bloquée — mots interdits : ${forbidden.join(', ')}` })
-      await adminSupabase
-        .from('pronostic_sessions')
-        .update({ status: 'rejected', notes: `Post bloqué — mots interdits : ${forbidden.join(', ')}` })
-        .eq('id', sessionId)
-      return { success: false, sessionId, message: `Post bloqué — mots interdits détectés : ${forbidden.join(', ')}` }
-    }
-
-    // ── Étape 8 : Image ticket + envoi Telegram ───────────────────────────────
-    const imageBuffer = await generateTicketImage(picks, combinedOdds, targetDate)
-    const caption = formatCombinePost(picks, combinedOdds)
-    const telegramMsgId = await sendPhoto(imageBuffer, caption)
-    blackboard.post({ from: 'orchestrator', type: 'action', content: `Publié sur Telegram — message #${telegramMsgId}.` })
-
-    // ── Étape 9 : Finalisation ───────────────────────────────────────────────
     await adminSupabase
       .from('pronostic_sessions')
       .update({
         status: 'published',
-        combined_odds: Math.round(combinedOdds * 100) / 100,
+        combined_odds: combo.combined_odds,
         published_at: new Date().toISOString(),
         telegram_msg_id: telegramMsgId,
       })
       .eq('id', sessionId)
 
-    await savePublishedMatches(picks, sessionId)
+    await savePublishedMatches(combo.picks, sessionId, tier)
 
     return {
+      tier,
       success: true,
       sessionId,
-      message: `Pipeline réussi — ${picks.length} picks publiés.`,
-      picksCount: picks.length,
-      combinedOdds: Math.round(combinedOdds * 100) / 100,
+      message: `Palier ${tier} publié — ${combo.picks.length} picks, cote ${combo.combined_odds}.`,
+      picksCount: combo.picks.length,
+      combinedOdds: combo.combined_odds,
       telegramMsgId,
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    blackboard.post({ from: 'orchestrator', type: 'result', content: `Erreur palier ${tier} : ${msg}` })
+    await adminSupabase.from('pronostic_sessions').update({ status: 'rejected', notes: `Erreur pipeline : ${msg}` }).eq('id', sessionId)
+    return { tier, success: false, sessionId, message: `Erreur palier ${tier} : ${msg}` }
+  }
+}
+
+export async function runPipeline(date?: string): Promise<OrchestratorResult> {
+  const targetDate = date ?? new Date().toISOString().split('T')[0]
+
+  const blackboard = new Blackboard(crypto.randomUUID())
+  // maxModelCalls couvre planner(1) + analyst(1) + jusqu'à 3 paliers ×
+  // (MAX_WRITER_ATTEMPTS écrivain + superviseur) — large marge volontaire.
+  const budget = createBudget({ maxModelCalls: 32, deadlineMs: 260_000 })
+  // Un run peut couvrir jusqu'à 3 sessions (une par palier) — le transcript
+  // partagé du blackboard est dupliqué vers chacune en fin de run pour que
+  // le "Journal des agents" reste consultable depuis n'importe quel palier.
+  const touchedSessionIds: string[] = []
+
+  try {
+    const longTermDigest = await loadLongTermDigest(SCOPE)
+    blackboard.write('longTermMemory', longTermDigest)
+
+    // ── Planner ───────────────────────────────────────────────────────────
+    const plannerOutput = await runPlanner(targetDate, blackboard, budget)
+
+    // ── Analyst : perception une fois, raisonnement une fois — produit des
+    //    CANDIDATS, la décision finale revient au Sélecteur de cotes ───────
+    const analystContext = await gatherAnalystContext(plannerOutput, blackboard)
+    const analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, undefined, blackboard, budget)
+    blackboard.post({
+      from: 'analyst',
+      to: 'odds-selector',
+      type: 'decision',
+      content: `${analystOutput.picks_retenus.length} picks candidats — ${analystOutput.summary}`,
+    })
+
+    if (!analystOutput.picks_retenus.length) {
+      return { success: false, message: 'Aucun pick candidat retenu par l\'analyste.', tiers: [] }
+    }
+
+    // ── Sélecteur de cotes : décision finale — cotes fiables + composition
+    //    des 3 combinés (picks partagés entre paliers) ──────────────────────
+    const oddsSelectorOutput = await decideOdds(analystOutput.picks_retenus, blackboard)
+
+    const builtTiers = ALL_TIERS.map(t => oddsSelectorOutput.combos[t]).filter((c): c is TierCombo => !!c)
+
+    if (!builtTiers.length) {
+      return { success: false, message: 'Aucun palier constructible aujourd\'hui (cotes fiables insuffisantes).', tiers: [] }
+    }
+
+    // ── Par palier : Rédacteur ⇄ Superviseur (retry borné), publication ─────
+    const tierResults: TierResult[] = []
+    for (const combo of builtTiers) {
+      const result = await publishTier({ date: targetDate, combo, blackboard, budget })
+      tierResults.push(result)
+
+      // Trace la composition/exclusion sur la session pour audit dashboard
+      if (result.sessionId) {
+        touchedSessionIds.push(result.sessionId)
+        await adminSupabase
+          .from('pronostic_sessions')
+          .update({ planner_output: plannerOutput, analyst_output: analystOutput, odds_selector_output: oddsSelectorOutput })
+          .eq('id', result.sessionId)
+      }
+    }
+
+    const anySuccess = tierResults.some(t => t.success)
+    const summary = tierResults.map(t => t.message).join(' | ')
+
+    return { success: anySuccess, message: summary, tiers: tierResults }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
     blackboard.post({ from: 'orchestrator', type: 'result', content: `Erreur pipeline : ${msg}` })
-    await adminSupabase
-      .from('pronostic_sessions')
-      .update({ status: 'rejected', notes: `Erreur pipeline : ${msg}` })
-      .eq('id', sessionId)
-    return { success: false, sessionId, message: `Erreur pipeline : ${msg}` }
+    return { success: false, message: `Erreur pipeline : ${msg}`, tiers: [] }
   } finally {
     // Le blackboard (mémoire court terme) est éphémère — seul son transcript
-    // est conservé, quel que soit le chemin de sortie du pipeline.
-    await persistRunTranscript({ scope: SCOPE, sessionId, blackboard })
+    // est conservé, dupliqué vers chaque session touchée ce run (voir note
+    // ci-dessus). Toujours au moins une écriture "sans session" pour ne pas
+    // perdre le transcript si aucune session n'a été créée (ex: échec avant
+    // le Sélecteur de cotes).
+    if (touchedSessionIds.length) {
+      await Promise.all(touchedSessionIds.map(sessionId => persistRunTranscript({ scope: SCOPE, sessionId, blackboard })))
+    } else {
+      await persistRunTranscript({ scope: SCOPE, blackboard })
+    }
   }
 }

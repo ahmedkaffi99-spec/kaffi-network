@@ -28,6 +28,12 @@ const STATUS_STYLES: Record<string, string> = {
   rejected: 'bg-red-900/20 text-red-400 border-red-700/30',
 }
 
+const TIER_LABELS: Record<string, string> = {
+  prudent: 'Prudent',
+  equilibre: 'Équilibré',
+  audacieux: 'Audacieux',
+}
+
 export default async function PronosticDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
@@ -46,6 +52,7 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
   const session = data as PronosticSession
   const picks = (session.picks ?? []) as Pick[]
   const analystOutput = session.analyst_output
+  const oddsSelectorOutput = session.odds_selector_output
   const messages = (agentMessages ?? []) as AgentMessageRow[]
 
   return (
@@ -58,6 +65,9 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
       <div className="p-8 space-y-5">
         {/* Status + meta */}
         <div className="flex items-center gap-3 flex-wrap">
+          <span className="px-3 py-1 text-xs font-semibold rounded-full border border-navy-600/50 bg-navy-800/40 text-gray-300">
+            {TIER_LABELS[session.tier] ?? session.tier}
+          </span>
           <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${STATUS_STYLES[session.status] ?? ''}`}>
             {session.status.toUpperCase()}
           </span>
@@ -130,6 +140,39 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
                       <div key={i} className="flex items-start gap-2 text-sm">
                         <span className="text-red-500 flex-shrink-0">✗</span>
                         <span className="text-gray-400">{rp.match} — <span className="text-gray-500">{rp.raison}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Sélecteur de cotes — traçabilité inclusion/exclusion */}
+        {oddsSelectorOutput && (
+          <Card>
+            <CardHeader>
+              <h2 className="font-semibold text-white text-sm">Sélecteur de cotes</h2>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              <p className="text-gray-500 text-xs">
+                {oddsSelectorOutput.reliable_picks.length} picks avec cote fiable · {oddsSelectorOutput.excluded_picks.length} rejetés
+              </p>
+              {oddsSelectorOutput.reliable_picks.map((p, i) => (
+                <div key={i} className="flex items-center justify-between text-sm gap-2 border-b border-navy-700/30 pb-2 last:border-0">
+                  <span className="text-gray-300">{p.home_team} — {p.away_team}</span>
+                  <span className="text-gold-400 text-xs">@{p.odds.toFixed(2)} · {p.odds_source}</span>
+                </div>
+              ))}
+              {oddsSelectorOutput.excluded_picks.length > 0 && (
+                <div className="mt-2">
+                  <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-2">Rejetés par le Sélecteur de cotes</h3>
+                  <div className="space-y-2">
+                    {oddsSelectorOutput.excluded_picks.map((ep, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm">
+                        <span className="text-red-500 flex-shrink-0">✗</span>
+                        <span className="text-gray-400">{ep.match} — <span className="text-gray-500">{ep.reason}</span></span>
                       </div>
                     ))}
                   </div>

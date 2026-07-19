@@ -28,6 +28,7 @@ export interface Pick {
 export interface PronosticSession {
   id: string
   date: string
+  tier: Tier
   status: SessionStatus
   combined_odds: number | null
   published_at: string | null
@@ -35,6 +36,7 @@ export interface PronosticSession {
   telegram_image_url: string | null
   planner_output: PlannerOutput | null
   analyst_output: AnalystOutput | null
+  odds_selector_output: OddsSelectorOutput | null
   writer_output: string | null
   supervisor_notes: SupervisorNotes | null
   iterations: number
@@ -130,6 +132,41 @@ export interface DashboardStats {
   published_today: number
   current_streak: number
   roi_this_month: number
+}
+
+// ─── Sélecteur de cotes (odds-selector) ────────────────────────────────────────
+
+export type Tier = 'prudent' | 'equilibre' | 'audacieux'
+
+export interface ReliablePick extends PickCandidate {
+  odds_source: string
+  bookmaker_spread_pct: number
+}
+
+export interface ExcludedPick {
+  match: string
+  bet_type: string
+  reason: string
+}
+
+export interface TierCombo {
+  tier: Tier
+  picks: ReliablePick[]
+  combined_odds: number
+}
+
+export interface TierDecision {
+  match: string
+  tier: Tier
+  included: boolean
+  reason: string
+}
+
+export interface OddsSelectorOutput {
+  reliable_picks: ReliablePick[]
+  excluded_picks: ExcludedPick[]
+  combos: Partial<Record<Tier, TierCombo>>
+  decisions: TierDecision[]
 }
 
 // ─── Journal des agents (agent_messages) ───────────────────────────────────────

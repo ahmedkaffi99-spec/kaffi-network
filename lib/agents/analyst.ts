@@ -9,8 +9,12 @@ import { checkTeamNews } from '@/lib/tools/serper'
 const MIN_TREND_PCT = 80
 const MIN_SAMPLE = 8
 const MIN_ODDS = 1.35
-const MAX_ODDS = 2.80
-const MAX_PICKS = 5
+// Plafond volontairement large : la composition des 3 combinés (prudent/
+// équilibré/audacieux) est décidée en aval par le Sélecteur de cotes
+// (lib/agents/odds-selector.ts), qui a besoin d'assez de matière — surtout
+// pour audacieux, sans plafond — plutôt que d'un plafond individuel bas ici.
+const MAX_ODDS = 6.0
+const MAX_PICKS = 20
 
 const MISSION: AgentMission = {
   role: 'analyst',

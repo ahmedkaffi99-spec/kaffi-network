@@ -9,12 +9,26 @@ const STATUS_STYLES: Record<string, string> = {
   draft: 'bg-navy-700 text-gray-300',
   approved: 'bg-emerald-900/50 text-emerald-400 border border-emerald-700/50',
   published: 'bg-gold-500/20 text-gold-400 border border-gold-600/50',
+  rejected: 'bg-red-900/40 text-red-400 border border-red-700/50',
 }
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Brouillon',
   approved: 'Approuvé',
   published: 'Publié',
+  rejected: 'Rejeté',
+}
+
+const TIER_STYLES: Record<string, string> = {
+  prudent: 'bg-blue-900/30 text-blue-300 border border-blue-700/40',
+  equilibre: 'bg-purple-900/30 text-purple-300 border border-purple-700/40',
+  audacieux: 'bg-orange-900/30 text-orange-300 border border-orange-700/40',
+}
+
+const TIER_LABELS: Record<string, string> = {
+  prudent: 'Prudent',
+  equilibre: 'Équilibré',
+  audacieux: 'Audacieux',
 }
 
 const COMPETITION_ICONS: Record<string, string> = {
@@ -79,11 +93,18 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
               )}
             </div>
           </div>
-          <span
-            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[session.status]}`}
-          >
-            {STATUS_LABELS[session.status]}
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${TIER_STYLES[session.tier] ?? ''}`}
+            >
+              {TIER_LABELS[session.tier] ?? session.tier}
+            </span>
+            <span
+              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[session.status]}`}
+            >
+              {STATUS_LABELS[session.status]}
+            </span>
+          </div>
         </div>
 
         {/* Result summary (if published) */}

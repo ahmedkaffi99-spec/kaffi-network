@@ -59,7 +59,7 @@ export async function POST(
       })
       .eq('id', sessionId)
 
-    await savePublishedMatches(picksAsCandidate, sessionId)
+    await savePublishedMatches(picksAsCandidate, sessionId, typedSession.tier)
 
     return NextResponse.json({ success: true, telegram_message_id: telegramMsgId })
   } catch (err) {

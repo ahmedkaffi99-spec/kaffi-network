@@ -1,102 +1,98 @@
 import { parseAgentJSON, callAgentModel, renderMission } from '@/lib/agent-kernel'
 import type { Blackboard } from '@/lib/agent-kernel/blackboard'
 import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
-import type { AnalystOutput, SupervisorNotes, SupervisorCheck } from '@/lib/types'
-
-const MIN_TREND_PCT = 80
-const MIN_SAMPLE = 8
-const MIN_ODDS = 1.35
-const MAX_ODDS = 2.80
-const MIN_PICKS = 2
-const MAX_PICKS = 5
+import type { TierCombo } from '@/lib/types'
+import { TIER_RANGES, MIN_PICKS_PER_COMBO } from './odds-selector'
 
 const MISSION: AgentMission = {
   role: 'supervisor',
   label: 'le Superviseur',
   responsibility:
-    "valider strictement la qualité et l'intégrité des picks retenus par l'Analyste avant toute publication — dernier garde-fou du crew.",
+    "valider strictement, pour chaque palier, le combiné composé par le Sélecteur de cotes ET le post rédigé par le Rédacteur avant toute publication — dernier garde-fou du crew.",
   doesNot: [
-    "Ne sélectionne ni ne modifie aucun pick lui-même — renvoie un feedback à l'Analyste pour révision.",
-    'Ne rédige pas le post Telegram.',
+    'Ne compose ni ne modifie aucun combiné lui-même — renvoie un feedback au Rédacteur pour réécriture.',
+    "Ne choisit aucune cote — délégué au Sélecteur de cotes.",
     'Ne publie jamais rien directement.',
   ],
 }
 
-export interface SupervisorResult extends SupervisorNotes {
-  feedback_for_analyst?: string
+const FORBIDDEN_WORDS = ['garanti', 'garantine', 'sûr à 100', '100% sûr', 'certain à 100', 'infaillible', 'sans risque', "gagné d'avance", 'coup sûr']
+
+export interface SupervisorTierResult {
+  verdict: 'approved' | 'revision_needed'
+  issues: string[]
+  feedback?: string
   lesson_for_memory?: string
 }
 
-export async function runSupervisor(
-  analystOutput: AnalystOutput,
-  iteration: number,
-  blackboard: Blackboard,
-  budget: RunBudget
-): Promise<SupervisorResult> {
-  const picks = analystOutput.picks_retenus
+function deterministicChecks(combo: TierCombo, writerOutput: string): string[] {
   const issues: string[] = []
 
-  if (picks.length < MIN_PICKS) issues.push(`Nombre de picks insuffisant : ${picks.length} (min ${MIN_PICKS})`)
-  if (picks.length > MAX_PICKS) issues.push(`Trop de picks : ${picks.length} (max ${MAX_PICKS})`)
-
-  const oddsOnlyMode = picks.every(p => p.sample_size === 0)
-
-  for (const pick of picks) {
-    if (!oddsOnlyMode && pick.trend_pct < MIN_TREND_PCT)
-      issues.push(`${pick.home_team}-${pick.away_team} : tendance ${pick.trend_pct}% < ${MIN_TREND_PCT}% requis`)
-    if (!oddsOnlyMode && pick.sample_size < MIN_SAMPLE)
-      issues.push(`${pick.home_team}-${pick.away_team} : seulement ${pick.sample_size} matchs < ${MIN_SAMPLE} requis`)
-    if (pick.odds < MIN_ODDS || pick.odds > MAX_ODDS)
-      issues.push(`${pick.home_team}-${pick.away_team} : cote ${pick.odds} hors plage ${MIN_ODDS}–${MAX_ODDS}`)
+  if (combo.picks.length < MIN_PICKS_PER_COMBO) {
+    issues.push(`Nombre de picks insuffisant : ${combo.picks.length} (min ${MIN_PICKS_PER_COMBO})`)
   }
 
-  const matchKeys = picks.map(p => `${p.home_team}-${p.away_team}`)
-  if (matchKeys.length !== new Set(matchKeys).size)
-    issues.push('Doublons : même match sélectionné plusieurs fois')
-
-  if (issues.length > 0) {
-    const feedback = `Itération ${iteration} rejetée. Corrections obligatoires :\n${issues.map(i => `• ${i}`).join('\n')}\nSélectionne d'autres matchs ou types de paris qui respectent strictement les critères.`
-    const check: SupervisorCheck = { verdict: 'revision_needed', issues, feedback }
-    blackboard.post({ from: 'supervisor', to: 'analyst', type: 'reflection', content: feedback })
-    return {
-      checks: [check],
-      final_verdict: 'rejected',
-      iterations: iteration,
-      model_used: 'deterministic',
-      feedback_for_analyst: feedback,
-    }
+  const matchKeys = combo.picks.map(p => `${p.home_team}-${p.away_team}`)
+  if (matchKeys.length !== new Set(matchKeys).size) {
+    issues.push('Doublons : même match sélectionné plusieurs fois dans ce combiné')
   }
 
-  if (oddsOnlyMode) {
-    const feedback = `Mode cotes-uniquement validé — ${picks.length} picks avec probabilité implicite de marché.`
-    const check: SupervisorCheck = { verdict: 'approved', feedback }
-    blackboard.post({ from: 'supervisor', type: 'decision', content: feedback })
-    return { checks: [check], final_verdict: 'approved', iterations: iteration, model_used: 'deterministic-odds-only' }
+  const range = TIER_RANGES.find(r => r.tier === combo.tier)
+  if (range && (combo.combined_odds < range.min || combo.combined_odds > range.max)) {
+    issues.push(`Cote combinée ${combo.combined_odds} hors de la plage déclarée du palier ${combo.tier} (${range.min}–${range.max === Infinity ? '∞' : range.max})`)
   }
 
-  // Validation qualitative — seule étape de ce agent qui appelle le modèle.
-  const picksText = picks
-    .map(p => `${p.home_team} vs ${p.away_team} (${p.competition}) → ${p.bet_type} @ ${p.odds.toFixed(2)} | tendance ${p.trend_pct}% sur ${p.sample_size} matchs`)
+  const writerLower = writerOutput.toLowerCase()
+  const forbidden = FORBIDDEN_WORDS.filter(w => writerLower.includes(w))
+  if (forbidden.length) {
+    issues.push(`Mots interdits dans le post : ${forbidden.join(', ')}`)
+  }
+
+  return issues
+}
+
+/**
+ * Valide un palier (combo + post déjà rédigé) — dernier garde-fou avant
+ * publication. Contrôles déterministes d'abord (structure, mots interdits) ;
+ * si aucun problème structurel, une seule passe qualitative LLM.
+ */
+export async function reviewTier(
+  combo: TierCombo,
+  writerOutput: string,
+  blackboard: Blackboard,
+  budget: RunBudget
+): Promise<SupervisorTierResult> {
+  const structuralIssues = deterministicChecks(combo, writerOutput)
+
+  if (structuralIssues.length > 0) {
+    const feedback = `Corrections obligatoires :\n${structuralIssues.map(i => `• ${i}`).join('\n')}`
+    blackboard.post({ from: 'supervisor', to: 'writer', type: 'reflection', content: `Palier ${combo.tier} — ${feedback}` })
+    return { verdict: 'revision_needed', issues: structuralIssues, feedback }
+  }
+
+  const picksText = combo.picks
+    .map(p => `${p.home_team} vs ${p.away_team} (${p.competition}) → ${p.bet_type} @ ${p.odds.toFixed(2)} [${p.odds_source}]`)
     .join('\n')
 
   const system = `${renderMission(MISSION)}
 
-VÉRIFICATIONS OBLIGATOIRES :
-1. Diversité des compétitions (pas 3 picks dans la même ligue)
-2. Cohérence des types de paris avec les données fournies
-3. Absence de contradictions entre picks (ex: over ET under sur le même match)
-4. Aucune stat inventée : chaque chiffre doit venir des données analytiques fournies
-5. INTERDIT d'approuver un pick dont la justification contient : "garanti", "sûr à 100%", "infaillible", "sans risque"
-6. Signale tout pick qui semble basé sur des données non vérifiables
+VÉRIFICATIONS OBLIGATOIRES SUR LE POST REÇU :
+1. Diversité des compétitions (pas 3 picks dans la même ligue si le combiné en compte plus)
+2. Cohérence entre le texte du post et les picks du combiné (aucun pick omis, ajouté ou déformé)
+3. Absence de contradictions (ex: over ET under sur le même match)
+4. Aucune promesse de gain déguisée qui contournerait l'esprit de l'interdiction "garanti/sûr à 100%/infaillible" même reformulée autrement
+5. Ton proportionné au risque : un palier audacieux (cote combinée élevée) doit clairement communiquer le risque, pas le minimiser
 
-Sois STRICT : un doute = revision_needed. Ne valide que ce qui est solide.
+Sois STRICT : un doute = revision_needed.
 Réponds UNIQUEMENT avec du JSON valide.`
 
-  const userMessage = `Valide ce combiné (itération ${iteration}) :
+  const userMessage = `Valide le palier ${combo.tier} (cote combinée ${combo.combined_odds.toFixed(2)}) :
 
+COMBINÉ :
 ${picksText}
 
-Résumé : ${analystOutput.summary}
+POST RÉDIGÉ :
+${writerOutput}
 
 JSON attendu :
 {
@@ -108,32 +104,21 @@ JSON attendu :
 
   const { text: raw } = await callAgentModel('supervisor', system, userMessage, 512, blackboard, budget)
 
-  // Fail-closed : une réponse illisible ne doit JAMAIS valider les picks par
+  // Fail-closed : une réponse illisible ne doit JAMAIS valider le palier par
   // défaut — c'est le dernier garde-fou avant publication automatique.
-  const fallback: SupervisorCheck = {
+  const fallback: SupervisorTierResult = {
     verdict: 'revision_needed',
     issues: ['Réponse du superviseur illisible (JSON invalide) — validation impossible'],
     feedback: "Le superviseur n'a pas pu être validé automatiquement, nouvelle tentative requise.",
   }
-  const check = parseAgentJSON<SupervisorCheck & { lesson_for_memory?: string }>(raw, fallback)
-
-  const feedbackForAnalyst = check.verdict !== 'approved' && check.issues?.length
-    ? `Itération ${iteration} rejetée par le superviseur :\n${check.issues.map(i => `• ${i}`).join('\n')}\n${check.feedback ?? ''}`
-    : undefined
+  const result = parseAgentJSON<SupervisorTierResult>(raw, fallback)
 
   blackboard.post({
     from: 'supervisor',
-    to: check.verdict === 'approved' ? 'all' : 'analyst',
-    type: check.verdict === 'approved' ? 'decision' : 'reflection',
-    content: check.feedback ?? (check.verdict === 'approved' ? 'Approuvé.' : 'Révision demandée.'),
+    to: result.verdict === 'approved' ? 'all' : 'writer',
+    type: result.verdict === 'approved' ? 'decision' : 'reflection',
+    content: `Palier ${combo.tier} — ${result.feedback ?? (result.verdict === 'approved' ? 'Approuvé.' : 'Révision demandée.')}`,
   })
 
-  return {
-    checks: [check],
-    final_verdict: check.verdict === 'approved' ? 'approved' : 'rejected',
-    iterations: iteration,
-    model_used: 'openrouter',
-    feedback_for_analyst: feedbackForAnalyst,
-    lesson_for_memory: check.lesson_for_memory,
-  }
+  return result
 }
