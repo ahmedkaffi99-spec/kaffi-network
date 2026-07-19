@@ -4,35 +4,37 @@ const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOK
 
 const NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
 
-function escapeV2(text: string): string {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&')
+// Telegram "HTML" parse_mode ne réserve que & < > — contrairement à
+// MarkdownV2 (~20 caractères réservés dont le point, très fréquent en
+// français), ce qui le rend beaucoup plus fiable pour du texte généré par
+// un LLM (le Rédacteur) qui n'échappe pas toujours parfaitement.
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 export function formatCombinePost(picks: PickCandidate[], combinedOdds: number): string {
   const n = picks.length
   const lines: string[] = []
 
-  lines.push(`🎫 *Combiné du jour — ${n} match${n > 1 ? 's' : ''} à tendance*`)
+  lines.push(`🎫 <b>Combiné du jour — ${n} match${n > 1 ? 's' : ''} à tendance</b>`)
   lines.push('')
 
   picks.forEach((pick, i) => {
-    const num = NUMBER_EMOJIS[i] ?? `${i + 1}\\.`
-    const match = escapeV2(`${pick.home_team} - ${pick.away_team}`)
-    const bet = escapeV2(pick.bet_type)
-    const odds = escapeV2(pick.odds.toFixed(2))
-    const trend = escapeV2(pick.trend_label)
-    lines.push(`${num} *${match}* → ${bet} \\(cote ${odds}\\)`)
-    lines.push(`   💡 _${trend}_`)
+    const num = NUMBER_EMOJIS[i] ?? `${i + 1}.`
+    const match = escapeHtml(`${pick.home_team} - ${pick.away_team}`)
+    const bet = escapeHtml(pick.bet_type)
+    const odds = pick.odds.toFixed(2)
+    const trend = escapeHtml(pick.trend_label)
+    lines.push(`${num} <b>${match}</b> → ${bet} (cote ${odds})`)
+    lines.push(`   💡 <i>${trend}</i>`)
   })
 
   lines.push('')
-  lines.push(`*Cote combinée : ${escapeV2(combinedOdds.toFixed(2))}*`)
+  lines.push(`<b>Cote combinée : ${combinedOdds.toFixed(2)}</b>`)
   lines.push('')
-  lines.push(`👉 Place ce combiné ici : ${escapeV2(process.env.AFFILIATE_LINK ?? '')}`)
+  lines.push(`👉 Place ce combiné ici : ${escapeHtml(process.env.AFFILIATE_LINK ?? '')}`)
   lines.push('')
-  lines.push(
-    `⚠️ _Plus un combiné a de matchs, plus le risque augmente\\. Aucune prédiction sportive n'est garantie\\._`
-  )
+  lines.push(`⚠️ <i>Plus un combiné a de matchs, plus le risque augmente. Aucune prédiction sportive n'est garantie.</i>`)
 
   return lines.join('\n')
 }
@@ -49,7 +51,7 @@ export async function sendMessage(text: string): Promise<string> {
     body: JSON.stringify({
       chat_id: channelId,
       text,
-      parse_mode: 'MarkdownV2',
+      parse_mode: 'HTML',
     }),
   })
 
@@ -67,7 +69,7 @@ export async function sendPhoto(imageBuffer: Buffer, caption: string): Promise<s
   const form = new FormData()
   form.append('chat_id', channelId)
   form.append('caption', caption)
-  form.append('parse_mode', 'MarkdownV2')
+  form.append('parse_mode', 'HTML')
   form.append('photo', new Blob([imageBuffer as unknown as ArrayBuffer], { type: 'image/png' }), 'kombine.png')
 
   const res = await fetch(`${TELEGRAM_API}/sendPhoto`, { method: 'POST', body: form })

@@ -39,8 +39,11 @@ export async function runWriter(
 
 Kaffi Network est une chaîne Telegram de pronostics football premium.
 Tu écris des posts engageants, confiants et professionnels en français.
-Style : direct, percutant, sans fioritures. Utilise MarkdownV2 Telegram.
-Règles MarkdownV2 : échappe ces caractères avec \\ : _ * [ ] ( ) ~ \` > # + - = | { } . !`
+Style : direct, percutant, sans fioritures. Format HTML Telegram UNIQUEMENT :
+- Gras : <b>texte</b>  ·  Italique : <i>texte</i>
+- Aucune autre balise. N'utilise JAMAIS la syntaxe Markdown (*, _, \`, [, ]).
+- Ponctuation normale (., !, -, parenthèses) : jamais besoin de les échapper.
+- Seuls les caractères & < > doivent être évités tels quels dans le texte libre (utilise "et" plutôt que "&" par exemple).`
 
   const userMessage = `Écris le post Telegram pour le combiné ${tierLabel} du ${date} :
 
