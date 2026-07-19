@@ -1,7 +1,7 @@
 import { routeCompletion } from '@/lib/model-router'
 import type { PlannerOutput, AnalystOutput } from '@/lib/types'
-import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type TeamMatchResult } from '@/lib/tools/football-api'
-import { getTodayOdds, findMatchOdds } from '@/lib/tools/odds-api'
+import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type MatchAnalysisData, type TeamMatchResult } from '@/lib/tools/football-api'
+import { getTodayOdds, findMatchOdds, type MatchOdds } from '@/lib/tools/odds-api'
 import { getAllPerformance, formatMemoryContext } from '@/lib/tools/memory'
 import { checkTeamNews } from '@/lib/tools/serper'
 
@@ -18,7 +18,6 @@ function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) =
 }
 
 function extractJson(text: string): string {
-  // Cherche un bloc JSON valide n'importe où dans le texte
   const fenceMatch = text.match(/```json?\s*([\s\S]*?)```/)
   if (fenceMatch) return fenceMatch[1].trim()
   const braceStart = text.indexOf('{')
@@ -27,68 +26,101 @@ function extractJson(text: string): string {
   return text.trim()
 }
 
+function oddsLines(matchOdds: MatchOdds): string[] {
+  const lines: string[] = []
+  const { home, draw, away } = matchOdds.h2h
+  if (home != null && home >= MIN_ODDS && home <= MAX_ODDS) lines.push(`Victoire domicile: ${home.toFixed(2)}`)
+  if (draw != null && draw >= MIN_ODDS && draw <= MAX_ODDS) lines.push(`Match nul: ${draw.toFixed(2)}`)
+  if (away != null && away >= MIN_ODDS && away <= MAX_ODDS) lines.push(`Victoire extérieur: ${away.toFixed(2)}`)
+  const { over_2_5, under_2_5 } = matchOdds.totals
+  if (over_2_5 != null && over_2_5 >= MIN_ODDS && over_2_5 <= MAX_ODDS) lines.push(`Plus de 2.5: ${over_2_5.toFixed(2)}`)
+  if (under_2_5 != null && under_2_5 >= MIN_ODDS && under_2_5 <= MAX_ODDS) lines.push(`Moins de 2.5: ${under_2_5.toFixed(2)}`)
+  const { yes, no } = matchOdds.btts
+  if (yes != null && yes >= MIN_ODDS && yes <= MAX_ODDS) lines.push(`BTTS Oui: ${yes.toFixed(2)}`)
+  if (no != null && no >= MIN_ODDS && no <= MAX_ODDS) lines.push(`BTTS Non: ${no.toFixed(2)}`)
+  return lines
+}
+
 export async function runAnalyst(
   plannerOutput: PlannerOutput,
   supervisorFeedback?: string
 ): Promise<AnalystOutput> {
-  const [matches, odds, performance] = await Promise.all([
-    getTodayMatches(),
-    getTodayOdds(),
-    getAllPerformance(),
-  ])
-
+  // Récupère odds et perf en parallèle — ces appels ne dépendent pas d'API-Football
+  const [odds, performance] = await Promise.all([getTodayOdds(), getAllPerformance()])
   const memoryContext = formatMemoryContext(performance)
 
-  // Pas de filtre par compétition — buildMatchAnalysisData prend tous les matchs
-  // et s'arrête selon le quota API disponible (max 8 matchs analysés par run)
-  const analysisData = await buildMatchAnalysisData(matches)
+  // Tente de récupérer les matchs et l'historique via API-Football
+  let analysisData: MatchAnalysisData[] = []
+  let oddsOnlyMode = false
+
+  try {
+    const matches: TodayMatch[] = await getTodayMatches()
+    if (matches.length > 0) {
+      analysisData = await buildMatchAnalysisData(matches)
+    }
+  } catch (err) {
+    console.warn('[analyst] API-Football indisponible (quota ou erreur) — mode cotes uniquement:', err)
+    oddsOnlyMode = true
+  }
+
+  // Fallback : si pas de données API-Football, utilise les matchs de The Odds API directement
+  if (analysisData.length === 0) {
+    oddsOnlyMode = true
+  }
 
   const enriched: string[] = []
 
-  for (const { match, home_team_last_matches, away_team_last_matches } of analysisData) {
-    const matchOdds = findMatchOdds(odds, match.home_team.name, match.away_team.name)
-    if (!matchOdds) continue
+  if (!oddsOnlyMode) {
+    // ── Mode complet : stats API-Football + cotes ─────────────────────────────
+    for (const { match, home_team_last_matches, away_team_last_matches } of analysisData) {
+      const matchOdds = findMatchOdds(odds, match.home_team.name, match.away_team.name)
+      if (!matchOdds) continue
 
-    const homeH = home_team_last_matches
-    const awayH = away_team_last_matches
+      const homeH = home_team_last_matches
+      const awayH = away_team_last_matches
 
-    const homeOver25 = calcTrend(homeH, m => m.total_goals > 2.5)
-    const awayOver25 = calcTrend(awayH, m => m.total_goals > 2.5)
-    const homeUnder25 = calcTrend(homeH, m => m.total_goals < 2.5)
-    const awayUnder25 = calcTrend(awayH, m => m.total_goals < 2.5)
-    const homeBtts = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
-    const awayBtts = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
-    const homeWins = calcTrend(homeH, m => m.result === 'W' && m.home)
+      const homeOver25  = calcTrend(homeH, m => m.total_goals > 2.5)
+      const awayOver25  = calcTrend(awayH, m => m.total_goals > 2.5)
+      const homeUnder25 = calcTrend(homeH, m => m.total_goals < 2.5)
+      const awayUnder25 = calcTrend(awayH, m => m.total_goals < 2.5)
+      const homeBtts    = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
+      const awayBtts    = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
+      const homeWins    = calcTrend(homeH, m => m.result === 'W' && m.home)
 
-    const oddsLines: string[] = []
-    const { home, draw, away } = matchOdds.h2h
-    if (home != null && home >= MIN_ODDS && home <= MAX_ODDS) oddsLines.push(`Victoire domicile: ${home.toFixed(2)}`)
-    if (draw != null && draw >= MIN_ODDS && draw <= MAX_ODDS) oddsLines.push(`Match nul: ${draw.toFixed(2)}`)
-    if (away != null && away >= MIN_ODDS && away <= MAX_ODDS) oddsLines.push(`Victoire extérieur: ${away.toFixed(2)}`)
+      const lines = oddsLines(matchOdds)
+      if (!lines.length) continue
 
-    const { over_2_5, under_2_5 } = matchOdds.totals
-    if (over_2_5 != null && over_2_5 >= MIN_ODDS && over_2_5 <= MAX_ODDS) oddsLines.push(`Plus de 2.5: ${over_2_5.toFixed(2)}`)
-    if (under_2_5 != null && under_2_5 >= MIN_ODDS && under_2_5 <= MAX_ODDS) oddsLines.push(`Moins de 2.5: ${under_2_5.toFixed(2)}`)
+      // Serper = contexte qualitatif UNIQUEMENT (blessures, suspensions, forfaits)
+      const [homeNews, awayNews] = await Promise.all([
+        checkTeamNews(match.home_team.name),
+        checkTeamNews(match.away_team.name),
+      ])
 
-    const { yes, no } = matchOdds.btts
-    if (yes != null && yes >= MIN_ODDS && yes <= MAX_ODDS) oddsLines.push(`BTTS Oui: ${yes.toFixed(2)}`)
-    if (no != null && no >= MIN_ODDS && no <= MAX_ODDS) oddsLines.push(`BTTS Non: ${no.toFixed(2)}`)
-
-    if (!oddsLines.length) continue
-
-    // Serper = contexte qualitatif UNIQUEMENT (blessures, suspensions, forfaits)
-    // Ne fournit JAMAIS de statistiques — seul API-Football est source chiffrée
-    const [homeNews, awayNews] = await Promise.all([
-      checkTeamNews(match.home_team.name),
-      checkTeamNews(match.away_team.name),
-    ])
-
-    enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
+      enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
 Domicile ${match.home_team.name} (${homeH.length} matchs): over2.5=${homeOver25.pct}%, under2.5=${homeUnder25.pct}%, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%
 Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, under2.5=${awayUnder25.pct}%, btts=${awayBtts.pct}%
 Actualités ${match.home_team.name}: ${homeNews}
 Actualités ${match.away_team.name}: ${awayNews}
-Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${oddsLines.join(', ')}`)
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
+    }
+  } else {
+    // ── Mode fallback cotes uniquement (API-Football quota épuisé) ────────────
+    // The Odds API reste disponible — on utilise ses matchs + la probabilité implicite des cotes
+    for (const event of odds.slice(0, 20)) {
+      const lines = oddsLines(event)
+      if (!lines.length) continue
+
+      const [homeNews, awayNews] = await Promise.all([
+        checkTeamNews(event.home_team),
+        checkTeamNews(event.away_team),
+      ])
+
+      enriched.push(`MATCH: ${event.home_team} vs ${event.away_team} — ${event.commence_time}
+[MODE COTES UNIQUEMENT — données historiques indisponibles]
+Actualités ${event.home_team}: ${homeNews}
+Actualités ${event.away_team}: ${awayNews}
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
+    }
   }
 
   if (!enriched.length) {
@@ -100,24 +132,21 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${oddsLines.join(', ')}`)
     }
   }
 
-  const systemPrompt = `Tu es l'analyste expert de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
+  const systemPrompt = oddsOnlyMode
+    ? `Tu es l'analyste expert de Kaffi Network. Les données historiques API-Football sont temporairement indisponibles.
+Tu travailles en MODE COTES UNIQUEMENT : les cotes de marché (bookmakers agrégés) sont ta seule source quantitative.
 
-SOURCES DE DONNÉES — règle impérative :
-- API-Football (champs "Domicile/Extérieur" avec %) : SEULE source autorisée pour les statistiques chiffrées, tendances, résultats de matchs.
-- Actualités Serper (champ "Actualités") : contexte QUALITATIF uniquement — blessures, suspensions, forfaits. Ne jamais utiliser un chiffre issu des actualités comme preuve statistique.
+RÈGLES EN MODE COTES :
+- Les cotes reflètent la probabilité implicite calculée sur des milliers de matchs. Une cote < 1.60 = probabilité > 62% selon le marché.
+- Source statistique autorisée : cotes uniquement. Jamais de chiffre inventé ou issu des actualités Serper.
+- Actualités Serper : contexte qualitatif UNIQUEMENT (blessures, suspensions). Aucune stat.
+- Retiens ${MAX_PICKS} picks maximum avec les cotes les plus basses (consensus marché le plus fort).
+- trend_pct = probabilité implicite de la cote (ex: cote 1.55 → pct = round(1/1.55*100) = 65)
+- sample_size = 0 (pas de données historiques)
 
-RÈGLES ABSOLUES — tout pick qui ne respecte pas ces critères DOIT être rejeté sans exception :
-1. Tendance ≥ ${MIN_TREND_PCT}% calculée sur ≥ ${MIN_SAMPLE} matchs récents (données API-Football uniquement)
-2. Cote entre ${MIN_ODDS} et ${MAX_ODDS} inclus
-3. Maximum ${MAX_PICKS} picks retenus dans picks_retenus
-4. Si les actualités signalent une blessure clé ou suspension de titulaire, rejeter le pick concerné
+${supervisorFeedback ? `FEEDBACK SUPERVISEUR :\n${supervisorFeedback}\n` : ''}
 
-MÉMOIRE DE PERFORMANCE HISTORIQUE (pondère tes choix en conséquence) :
-${memoryContext || 'Aucun historique disponible — première analyse.'}
-
-${supervisorFeedback ? `FEEDBACK SUPERVISEUR À CORRIGER IMPÉRATIVEMENT :\n${supervisorFeedback}\n` : ''}
-
-Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou après :
+Réponds UNIQUEMENT avec un objet JSON valide :
 {
   "picks_retenus": [
     {
@@ -125,17 +154,39 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou après :
       "home_team": "string",
       "away_team": "string",
       "match_datetime": "ISO 8601",
-      "bet_type": "string (ex: Plus de 2.5, BTTS Oui, Victoire domicile)",
+      "bet_type": "string",
       "odds": number,
-      "trend_label": "string courte (ex: 9/10 matchs over 2.5)",
+      "trend_label": "string (ex: Cote marché 1.55 = 65% probabilité implicite)",
       "trend_pct": number,
-      "sample_size": number
+      "sample_size": 0
     }
   ],
-  "picks_rejetés": [
-    { "match": "string", "competition": "string", "bet_type": "string", "raison": "string" }
+  "picks_rejetés": [{ "match": "string", "competition": "string", "bet_type": "string", "raison": "string" }],
+  "summary": "string"
+}`
+    : `Tu es l'analyste expert de Kaffi Network. Tu sélectionnes des picks football à haute valeur statistique.
+
+SOURCES DE DONNÉES :
+- API-Football (champs Domicile/Extérieur avec %) : SEULE source pour les statistiques chiffrées.
+- Serper (champ Actualités) : contexte QUALITATIF uniquement — blessures, suspensions. Jamais de stat.
+
+RÈGLES ABSOLUES :
+1. Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs (API-Football uniquement)
+2. Cote entre ${MIN_ODDS} et ${MAX_ODDS}
+3. Maximum ${MAX_PICKS} picks
+4. Blessure/suspension clé détectée = pick rejeté
+
+MÉMOIRE : ${memoryContext || 'Aucun historique.'}
+${supervisorFeedback ? `\nFEEDBACK SUPERVISEUR :\n${supervisorFeedback}` : ''}
+
+Réponds UNIQUEMENT JSON :
+{
+  "picks_retenus": [
+    { "competition": "string", "home_team": "string", "away_team": "string", "match_datetime": "ISO 8601",
+      "bet_type": "string", "odds": number, "trend_label": "string", "trend_pct": number, "sample_size": number }
   ],
-  "summary": "string (2-3 phrases sur la sélection du jour)"
+  "picks_rejetés": [{ "match": "string", "competition": "string", "bet_type": "string", "raison": "string" }],
+  "summary": "string"
 }`
 
   const userMessage = `Focus du jour : ${plannerOutput.focus_areas.join(', ')}
@@ -149,13 +200,16 @@ ${enriched.join('\n\n')}`
 
   try {
     const parsed = JSON.parse(jsonStr) as AnalystOutput
-    // Validation stricte post-parsing
-    const validPicks = parsed.picks_retenus.filter(p =>
-      p.trend_pct >= MIN_TREND_PCT &&
-      p.sample_size >= MIN_SAMPLE &&
-      p.odds >= MIN_ODDS &&
-      p.odds <= MAX_ODDS
-    )
+
+    const validPicks = oddsOnlyMode
+      ? parsed.picks_retenus.filter(p => p.odds >= MIN_ODDS && p.odds <= MAX_ODDS)
+      : parsed.picks_retenus.filter(p =>
+          p.trend_pct >= MIN_TREND_PCT &&
+          p.sample_size >= MIN_SAMPLE &&
+          p.odds >= MIN_ODDS &&
+          p.odds <= MAX_ODDS
+        )
+
     return { ...parsed, picks_retenus: validPicks, model_used }
   } catch {
     return {
