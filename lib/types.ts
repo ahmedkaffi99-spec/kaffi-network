@@ -42,6 +42,8 @@ export interface PronosticSession {
   iterations: number
   notes: string | null
   created_at: string
+  combo_result: 'win' | 'loss' | 'void' | null
+  result_posted_at: string | null
   picks?: Pick[]
 }
 

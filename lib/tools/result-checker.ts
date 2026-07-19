@@ -1,6 +1,8 @@
 import { adminSupabase } from '@/lib/supabase/admin'
 import { getMatchResult } from '@/lib/tools/football-api'
 import { updatePerformance } from '@/lib/tools/memory'
+import { sendMessage, formatResultAnnouncement } from '@/lib/tools/telegram'
+import type { Tier } from '@/lib/types'
 
 interface PendingPick {
   id: string
@@ -12,6 +14,15 @@ interface PendingPick {
   bet_type: string
   odds: number
   result: null
+}
+
+interface SessionWithPicks {
+  id: string
+  tier: Tier
+  date: string
+  combined_odds: number | null
+  telegram_msg_id: string | null
+  picks: Array<{ result: 'win' | 'loss' | 'void' | null; was_rejected: boolean }>
 }
 
 function evaluateResult(
@@ -82,4 +93,57 @@ export async function checkPendingResults(): Promise<{ checked: number; updated:
   }
 
   return { checked: pending.length, updated }
+}
+
+/**
+ * Poste le résultat d'un combiné sur Telegram une fois que TOUS ses picks
+ * sont résolus (win/loss/void) — un seul pick perdant fait perdre tout le
+ * combiné, comme un vrai pari combiné. Chaque session n'est annoncée
+ * qu'une fois (result_posted_at). Appelé après checkPendingResults() dans
+ * le même cron, pour que les picks soient déjà à jour.
+ */
+export async function announceSessionResults(): Promise<{ checked: number; announced: number }> {
+  const { data: sessions } = await adminSupabase
+    .from('pronostic_sessions')
+    .select('id, tier, date, combined_odds, telegram_msg_id, picks(result, was_rejected)')
+    .eq('status', 'published')
+    .is('result_posted_at', null)
+    .limit(20)
+
+  if (!sessions?.length) return { checked: 0, announced: 0 }
+
+  let announced = 0
+
+  for (const session of sessions as unknown as SessionWithPicks[]) {
+    const picks = session.picks.filter(p => !p.was_rejected)
+    if (!picks.length) continue
+
+    const allResolved = picks.every(p => p.result !== null)
+    if (!allResolved) continue
+
+    const hasLoss = picks.some(p => p.result === 'loss')
+    const allVoid = picks.every(p => p.result === 'void')
+    const comboResult: 'win' | 'loss' | 'void' = hasLoss ? 'loss' : allVoid ? 'void' : 'win'
+    const wins = picks.filter(p => p.result === 'win').length
+
+    const message = formatResultAnnouncement({
+      tier: session.tier,
+      date: session.date,
+      comboResult,
+      wins,
+      total: picks.length,
+      combinedOdds: session.combined_odds,
+    })
+
+    await sendMessage(message, session.telegram_msg_id ?? undefined)
+
+    await adminSupabase
+      .from('pronostic_sessions')
+      .update({ combo_result: comboResult, result_posted_at: new Date().toISOString() })
+      .eq('id', session.id)
+
+    announced++
+  }
+
+  return { checked: sessions.length, announced }
 }

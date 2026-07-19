@@ -1,4 +1,10 @@
-import type { PickCandidate } from '@/lib/types'
+import type { PickCandidate, Tier } from '@/lib/types'
+
+const TIER_LABELS: Record<Tier, string> = {
+  prudent: 'Prudent',
+  equilibre: 'Équilibré',
+  audacieux: 'Audacieux',
+}
 
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`
 
@@ -39,7 +45,7 @@ export function formatCombinePost(picks: PickCandidate[], combinedOdds: number):
   return lines.join('\n')
 }
 
-export async function sendMessage(text: string): Promise<string> {
+export async function sendMessage(text: string, replyToMessageId?: string): Promise<string> {
   const channelId = process.env.TELEGRAM_CHANNEL_ID
   if (!process.env.TELEGRAM_BOT_TOKEN || !channelId) {
     throw new Error('TELEGRAM_BOT_TOKEN ou TELEGRAM_CHANNEL_ID manquant')
@@ -52,12 +58,41 @@ export async function sendMessage(text: string): Promise<string> {
       chat_id: channelId,
       text,
       parse_mode: 'HTML',
+      ...(replyToMessageId ? { reply_to_message_id: Number(replyToMessageId) } : {}),
     }),
   })
 
   if (!res.ok) throw new Error(`Telegram sendMessage ${res.status}: ${await res.text()}`)
   const data = await res.json()
   return String(data.result.message_id)
+}
+
+export interface ResultAnnouncementParams {
+  tier: Tier
+  date: string
+  comboResult: 'win' | 'loss' | 'void'
+  wins: number
+  total: number
+  combinedOdds: number | null
+}
+
+/** Message factuel — pas de LLM ici, l'annonce d'un résultat ne doit rien "interpréter". */
+export function formatResultAnnouncement(params: ResultAnnouncementParams): string {
+  const { tier, date, comboResult, wins, total, combinedOdds } = params
+  const tierLabel = TIER_LABELS[tier] ?? tier
+  const dateLabel = new Date(date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+  const icon = comboResult === 'win' ? '✅' : comboResult === 'loss' ? '❌' : '➖'
+  const verdict = comboResult === 'win' ? 'GAGNÉ' : comboResult === 'loss' ? 'PERDU' : 'ANNULÉ'
+
+  const lines = [
+    `${icon} <b>Résultat — Combiné ${tierLabel} du ${dateLabel}</b>`,
+    '',
+    `${wins}/${total} picks corrects`,
+  ]
+  if (combinedOdds != null) lines.push(`Cote visée : ${combinedOdds.toFixed(2)}`)
+  lines.push('', `<b>${verdict}</b>`)
+
+  return lines.join('\n')
 }
 
 export async function sendPhoto(imageBuffer: Buffer, caption: string): Promise<string> {

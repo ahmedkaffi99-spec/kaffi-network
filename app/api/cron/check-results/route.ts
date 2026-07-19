@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { checkPendingResults } from '@/lib/tools/result-checker'
+import { checkPendingResults, announceSessionResults } from '@/lib/tools/result-checker'
 
 export const maxDuration = 120
 
@@ -10,5 +10,6 @@ export async function GET(req: NextRequest) {
   }
 
   const result = await checkPendingResults()
-  return NextResponse.json({ success: true, ...result })
+  const announcements = await announceSessionResults()
+  return NextResponse.json({ success: true, ...result, announcements })
 }

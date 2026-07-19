@@ -110,6 +110,15 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
         {/* Result summary (if published) */}
         {session.status === 'published' && picks.some(p => p.result) && (
           <div className="flex items-center gap-3 mb-4 p-3 bg-navy-900/60 rounded-xl">
+            {session.combo_result && (
+              <span
+                className={`text-sm font-bold ${
+                  session.combo_result === 'win' ? 'text-emerald-400' : session.combo_result === 'loss' ? 'text-red-400' : 'text-gray-400'
+                }`}
+              >
+                {session.combo_result === 'win' ? '✅ GAGNÉ' : session.combo_result === 'loss' ? '❌ PERDU' : '➖ ANNULÉ'}
+              </span>
+            )}
             {winCount > 0 && (
               <span className="text-sm text-emerald-400 font-semibold">✓ {winCount} gagné{winCount > 1 ? 's' : ''}</span>
             )}
