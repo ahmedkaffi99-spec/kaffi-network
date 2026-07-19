@@ -17,14 +17,14 @@ export interface MatchOdds {
   commence_time: string
   h2h: { home: number | null; draw: number | null; away: number | null }
   totals: { over_2_5: number | null; under_2_5: number | null }
-  btts: { yes: number | null; no: number | null }
+  btts: { yes: number | null; no: number | null }  // toujours null (btts non disponible en plan gratuit)
 }
 
 export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   const url = new URL(`${BASE_URL}/sports/${SPORT}/odds`)
   url.searchParams.set('apiKey', process.env.ODDS_API_KEY!)
   url.searchParams.set('regions', region)
-  url.searchParams.set('markets', 'h2h,totals,btts')
+  url.searchParams.set('markets', 'h2h,totals')  // btts retiré : non supporté plan gratuit
   url.searchParams.set('oddsFormat', 'decimal')
   url.searchParams.set('dateFormat', 'iso')
 

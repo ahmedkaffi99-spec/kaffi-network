@@ -115,11 +115,17 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
         checkTeamNews(event.away_team),
       ])
 
+      // Probabilité implicite = 1/cote × 100, arrondie à l'entier
+      const impliedProbs = lines.map(l => {
+        const odds = parseFloat(l.split(': ')[1])
+        return `${l} (prob. implicite: ${Math.round((1 / odds) * 100)}%)`
+      })
+
       enriched.push(`MATCH: ${event.home_team} vs ${event.away_team} — ${event.commence_time}
 [MODE COTES UNIQUEMENT — données historiques indisponibles]
 Actualités ${event.home_team}: ${homeNews}
 Actualités ${event.away_team}: ${awayNews}
-Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${impliedProbs.join(', ')}`)
     }
   }
 
@@ -141,8 +147,8 @@ RÈGLES EN MODE COTES :
 - Source statistique autorisée : cotes uniquement. Jamais de chiffre inventé ou issu des actualités Serper.
 - Actualités Serper : contexte qualitatif UNIQUEMENT (blessures, suspensions). Aucune stat.
 - Retiens ${MAX_PICKS} picks maximum avec les cotes les plus basses (consensus marché le plus fort).
-- trend_pct = probabilité implicite de la cote (ex: cote 1.55 → pct = round(1/1.55*100) = 65)
-- sample_size = 0 (pas de données historiques)
+- trend_pct = probabilité implicite déjà calculée et fournie dans les données (ex: 65)
+- sample_size = 0 OBLIGATOIRE (pas de données historiques)
 
 ${supervisorFeedback ? `FEEDBACK SUPERVISEUR :\n${supervisorFeedback}\n` : ''}
 

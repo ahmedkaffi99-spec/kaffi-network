@@ -20,10 +20,13 @@ export async function runSupervisor(
   if (picks.length < MIN_PICKS) issues.push(`Nombre de picks insuffisant : ${picks.length} (min ${MIN_PICKS})`)
   if (picks.length > MAX_PICKS) issues.push(`Trop de picks : ${picks.length} (max ${MAX_PICKS})`)
 
+  const oddsOnlyMode = picks.every(p => p.sample_size === 0)
+
   for (const pick of picks) {
-    if (pick.trend_pct < MIN_TREND_PCT)
+    // En mode cotes-uniquement (sample_size=0), trend_pct et sample_size ne s'appliquent pas
+    if (!oddsOnlyMode && pick.trend_pct < MIN_TREND_PCT)
       issues.push(`${pick.home_team}-${pick.away_team} : tendance ${pick.trend_pct}% < ${MIN_TREND_PCT}% requis`)
-    if (pick.sample_size < MIN_SAMPLE)
+    if (!oddsOnlyMode && pick.sample_size < MIN_SAMPLE)
       issues.push(`${pick.home_team}-${pick.away_team} : seulement ${pick.sample_size} matchs < ${MIN_SAMPLE} requis`)
     if (pick.odds < MIN_ODDS || pick.odds > MAX_ODDS)
       issues.push(`${pick.home_team}-${pick.away_team} : cote ${pick.odds} hors plage ${MIN_ODDS}–${MAX_ODDS}`)
