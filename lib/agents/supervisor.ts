@@ -101,7 +101,12 @@ JSON attendu :
   try {
     check = JSON.parse(jsonStr) as SupervisorCheck
   } catch {
-    check = { verdict: 'approved', feedback: 'Validation OK' }
+    // Fail-closed : une réponse superviseur illisible ne doit jamais valider les picks
+    check = {
+      verdict: 'revision_needed',
+      issues: ['Réponse du superviseur illisible (JSON invalide) — validation impossible'],
+      feedback: "Le superviseur n'a pas pu être validé automatiquement, nouvelle tentative requise.",
+    }
   }
 
   const feedbackForAnalyst = check.verdict !== 'approved' && check.issues?.length
