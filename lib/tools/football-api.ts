@@ -5,16 +5,30 @@ const BASE_URL = 'https://v3.football.api-sports.io'
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 async function apiRequest<T>(path: string): Promise<T> {
+  const apiKey = process.env.API_FOOTBALL_KEY
+
+  if (!apiKey) {
+    throw new Error("Configuration requise : La clé API_FOOTBALL_KEY est introuvable dans l'environnement.")
+  }
+
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'x-apisports-key': process.env.API_FOOTBALL_KEY! },
+    headers: {
+      'x-apisports-key': apiKey,
+      'Content-Type': 'application/json'
+    },
     cache: 'no-store',
   })
-  if (!res.ok) throw new Error(`API-Football ${res.status}: ${await res.text()}`)
-  const json = await res.json()
-  // L'API renvoie toujours { response: [...], errors: {...} }
-  if (json.errors && Object.keys(json.errors).length > 0) {
-    throw new Error(`API-Football error: ${JSON.stringify(json.errors)}`)
+
+  if (!res.ok) {
+    throw new Error(`API-Football HTTP Error ${res.status}: ${await res.text()}`)
   }
+
+  const json = await res.json()
+
+  if (json.errors && !Array.isArray(json.errors) && Object.keys(json.errors).length > 0) {
+    throw new Error(`API-Football API Error: ${JSON.stringify(json.errors)}`)
+  }
+
   return json as T
 }
 
@@ -60,14 +74,17 @@ export interface MatchAnalysisData {
   away_team_last_matches: TeamMatchResult[]
 }
 
-// ─── Constantes de statut ─────────────────────────────────────────────────────
+// ─── Constantes ───────────────────────────────────────────────────────────────
 
 const ACTIVE_STATUSES = ['NS', 'TBD', '1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE']
 const FINISHED_STATUSES = ['FT', 'AET', 'PEN']
+// Plan gratuit : rate limit 10 req/min → 1 requête toutes les 6s minimum
+const RATE_LIMIT_SLEEP = 7000
+// Rate limit 7s/call × 2 équipes × 8 matchs + IA ≈ 288s < 300s timeout Vercel
+const MAX_MATCHES_TO_ANALYZE = 8
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Compte une requête dans le quota et retourne le résultat de la requête. */
 async function trackRequest<T>(path: string, n = 1): Promise<T> {
   const data = await apiRequest<T>(path)
   await incrementQuota('api-football', n)
@@ -89,6 +106,7 @@ function mapFixtureToTeamMatchResult(entry: ApiFixtureEntry, teamId: number): Te
   const gf = (isHome ? entry.goals.home : entry.goals.away) ?? 0
   const ga = (isHome ? entry.goals.away : entry.goals.home) ?? 0
   const result: 'W' | 'D' | 'L' = gf > ga ? 'W' : gf === ga ? 'D' : 'L'
+
   return {
     date: entry.fixture.date,
     opponent: isHome ? entry.teams.away.name : entry.teams.home.name,
@@ -102,49 +120,29 @@ function mapFixtureToTeamMatchResult(entry: ApiFixtureEntry, teamId: number): Te
 
 // ─── Fonctions exportées ──────────────────────────────────────────────────────
 
-/**
- * Récupère tous les matchs du jour (statut actif ou à venir).
- * Coût : 1 requête API.
- */
 export async function getTodayMatches(): Promise<TodayMatch[]> {
   const today = new Date().toISOString().split('T')[0]
   const data = await trackRequest<ApiFixturesResponse>(`/fixtures?date=${today}`, 1)
+
   return data.response
     .filter(entry => ACTIVE_STATUSES.includes(entry.fixture.status.short))
     .map(mapFixtureToTodayMatch)
 }
 
-// Plan gratuit : saisons 2022-2024 disponibles, pas de `last`, rate limit 10 req/min
-const RATE_LIMIT_SLEEP = 7000
-
-/**
- * Récupère l'historique de l'équipe sur la saison 2024 (plan gratuit).
- * Coût : 1 requête par équipe.
- */
 async function getTeamHistory(teamId: number, limit = 15): Promise<TeamMatchResult[]> {
   await sleep(RATE_LIMIT_SLEEP)
   const data = await trackRequest<ApiFixturesResponse>(
     `/fixtures?team=${teamId}&season=2024`,
     1
   )
+
   const finished = data.response.filter(e => FINISHED_STATUSES.includes(e.fixture.status.short))
+
   return finished
     .sort((a, b) => b.fixture.date.localeCompare(a.fixture.date))
     .slice(0, limit)
     .map(e => mapFixtureToTeamMatchResult(e, teamId))
 }
-
-/**
- * Construit les données d'analyse pour chaque match en récupérant l'historique
- * des deux équipes, avec gestion du quota et cache en mémoire.
- *
- * Coût par match : 0, 1 ou 2 requêtes selon le cache (chaque équipe inédite = 1 req).
- * Marge de sécurité : 5 requêtes réservées avant la boucle.
- */
-// Limite le nombre de matchs pour rester dans le timeout Vercel (300s)
-// Rate limit 10 req/min (7s/call) × 3 saisons worst-case × 2 équipes × N matchs + AI
-// → MAX 8 matchs analysés par run = ~168s d'appels API + ~120s IA = ~288s
-const MAX_MATCHES_TO_ANALYZE = 8
 
 export async function buildMatchAnalysisData(
   matches: TodayMatch[],
@@ -152,12 +150,10 @@ export async function buildMatchAnalysisData(
 ): Promise<MatchAnalysisData[]> {
   const cache = new Map<number, TeamMatchResult[]>()
   const result: MatchAnalysisData[] = []
-
   const SAFETY_MARGIN = 5
-  // 1 appel par équipe (1 seule saison sur le plan gratuit)
   const COST_PER_TEAM = 1
-  let remaining = await getRemainingQuota('api-football')
 
+  let remaining = await getRemainingQuota('api-football')
   const limited = matches.slice(0, MAX_MATCHES_TO_ANALYZE)
 
   for (const match of limited) {
@@ -166,9 +162,7 @@ export async function buildMatchAnalysisData(
     const cost = (homeInCache ? 0 : COST_PER_TEAM) + (awayInCache ? 0 : COST_PER_TEAM)
 
     if (remaining - cost < SAFETY_MARGIN) {
-      console.warn(
-        `[quota] Quota insuffisant (restant: ${remaining}, coût: ${cost}) — arrêt après ${result.length} matchs.`
-      )
+      console.warn(`[quota] Quota insuffisant (restant: ${remaining}, coût: ${cost}) — arrêt après ${result.length} matchs.`)
       break
     }
 
@@ -194,11 +188,6 @@ export async function buildMatchAnalysisData(
   return result
 }
 
-/**
- * Récupère le score final d'un match terminé identifié par les noms des équipes
- * et la date du match.
- * Coût : 1 requête API.
- */
 export async function getMatchResult(
   homeTeam: string,
   awayTeam: string,
@@ -212,6 +201,7 @@ export async function getMatchResult(
         e.teams.away.name === awayTeam &&
         FINISHED_STATUSES.includes(e.fixture.status.short)
     )
+
     if (!entry || entry.goals.home === null || entry.goals.away === null) return null
     return { home: entry.goals.home, away: entry.goals.away }
   } catch {
