@@ -21,8 +21,6 @@ const SUPERVISOR_MODELS = [
   'meta-llama/llama-3.3-70b-instruct:free',
 ]
 
-const CLAUDE_FALLBACK = 'claude-haiku-4-5-20251001'
-
 export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
 
 interface Message {
@@ -71,23 +69,6 @@ async function callOpenRouter(
   }
 }
 
-async function callClaude(
-  system: string,
-  messages: Message[],
-  maxTokens: number
-): Promise<string> {
-  const Anthropic = (await import('@anthropic-ai/sdk')).default
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-
-  const msg = await client.messages.create({
-    model: CLAUDE_FALLBACK,
-    max_tokens: maxTokens,
-    system,
-    messages: messages as Array<{ role: 'user' | 'assistant'; content: string }>,
-  })
-
-  return msg.content[0].type === 'text' ? msg.content[0].text.trim() : ''
-}
 
 export async function routeCompletion(
   role: AgentRole,
@@ -107,7 +88,6 @@ export async function routeCompletion(
     if (text) return { text, model_used: model }
   }
 
-  // Fallback Claude
-  const text = await callClaude(system, messages, maxTokens)
-  return { text, model_used: CLAUDE_FALLBACK }
+  // Tous les modèles OpenRouter ont échoué
+  return { text: '', model_used: 'unavailable' }
 }
