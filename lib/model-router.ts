@@ -1,4 +1,14 @@
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
+import { generateText } from 'ai'
+import { createOpenAI } from '@ai-sdk/openai'
+
+const openrouter = createOpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  headers: {
+    'HTTP-Referer': 'https://kaffi-network.vercel.app',
+    'X-Title': 'Kaffi Network',
+  },
+})
 
 const PLANNER_MODELS = [
   'google/gemma-4-26b-a4b-it:free',
@@ -23,52 +33,10 @@ const SUPERVISOR_MODELS = [
 
 export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
 
-interface Message {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}
-
 interface RouterResult {
   text: string
   model_used: string
 }
-
-async function callOpenRouter(
-  model: string,
-  system: string,
-  messages: Message[],
-  maxTokens: number
-): Promise<string | null> {
-  try {
-    const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY!}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://kaffi-network.vercel.app',
-        'X-Title': 'Kaffi Network',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: [
-          { role: 'system', content: system },
-          ...messages,
-        ],
-      }),
-      signal: AbortSignal.timeout(25000),
-    })
-
-    if (res.status === 429 || res.status >= 500) return null
-
-    const data = await res.json()
-    const text = data?.choices?.[0]?.message?.content
-    return typeof text === 'string' && text.trim() ? text.trim() : null
-  } catch {
-    return null
-  }
-}
-
 
 export async function routeCompletion(
   role: AgentRole,
@@ -81,13 +49,21 @@ export async function routeCompletion(
     role === 'writer' ? WRITER_MODELS :
     role === 'supervisor' ? SUPERVISOR_MODELS :
     ANALYST_MODELS
-  const messages: Message[] = [{ role: 'user', content: userMessage }]
 
   for (const model of models) {
-    const text = await callOpenRouter(model, system, messages, maxTokens)
-    if (text) return { text, model_used: model }
+    try {
+      const { text } = await generateText({
+        model: openrouter(model),
+        system,
+        prompt: userMessage,
+        maxOutputTokens: maxTokens,
+        abortSignal: AbortSignal.timeout(25000),
+      })
+      if (text?.trim()) return { text: text.trim(), model_used: model }
+    } catch {
+      // modèle indisponible, on essaie le suivant
+    }
   }
 
-  // Tous les modèles OpenRouter ont échoué
   return { text: '', model_used: 'unavailable' }
 }
