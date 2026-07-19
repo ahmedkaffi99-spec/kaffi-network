@@ -16,7 +16,7 @@ export default async function DashboardPage() {
       .order('tier', { ascending: true }),
     supabase
       .from('pronostic_sessions')
-      .select('id, date, status, combined_odds, picks(result)')
+      .select('id, date, status, combined_odds, combo_result, picks(result)')
       .gte('date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
       .order('date', { ascending: false })
       .limit(60),
@@ -45,6 +45,13 @@ export default async function DashboardPage() {
   ).length
   const pendingReview = (sessions ?? []).filter(s => s.status === 'draft').length
 
+  // Combinés publiés : en cours (résultat pas encore annoncé) vs terminés (gagné/perdu/annulé)
+  const publishedCombos = (sessions ?? []).filter(s => s.status === 'published')
+  const combosEnCours = publishedCombos.filter(s => !s.combo_result).length
+  const combosTermines = publishedCombos.filter(s => s.combo_result).length
+  const combosGagnes = publishedCombos.filter(s => s.combo_result === 'win').length
+  const combosPerdus = publishedCombos.filter(s => s.combo_result === 'loss').length
+
   // Streak : sessions consécutives sans aucune perte
   const sortedSessions = [...(sessions ?? [])].sort((a, b) => b.date.localeCompare(a.date))
   let streak = 0
@@ -63,6 +70,10 @@ export default async function DashboardPage() {
     published_today: publishedToday,
     current_streak: streak,
     roi_this_month: roi,
+    combos_en_cours: combosEnCours,
+    combos_termines: combosTermines,
+    combos_gagnes: combosGagnes,
+    combos_perdus: combosPerdus,
   }
 
   return <DashboardClient todaySessions={(todaySessions ?? []) as PronosticSession[]} stats={stats} />

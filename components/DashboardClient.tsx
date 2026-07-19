@@ -94,6 +94,18 @@ export function DashboardClient({ todaySessions, stats }: Props) {
 
         <div>
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Combinés publiés — statut
+          </h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatsWidget label="En cours" value={stats.combos_en_cours} sub="Matchs pas tous terminés" icon="⏱️" />
+            <StatsWidget label="Terminés" value={stats.combos_termines} sub="Résultat annoncé" icon="🏁" />
+            <StatsWidget label="Gagnés" value={stats.combos_gagnes} sub="Sur les combinés terminés" trend="up" icon="✅" />
+            <StatsWidget label="Perdus" value={stats.combos_perdus} sub="Sur les combinés terminés" icon="❌" />
+          </div>
+        </div>
+
+        <div>
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
             Combinés du jour
           </h2>
           {todaySessions.length ? (

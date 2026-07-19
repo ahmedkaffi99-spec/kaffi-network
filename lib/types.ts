@@ -134,6 +134,10 @@ export interface DashboardStats {
   published_today: number
   current_streak: number
   roi_this_month: number
+  combos_en_cours: number
+  combos_termines: number
+  combos_gagnes: number
+  combos_perdus: number
 }
 
 // ─── Sélecteur de cotes (odds-selector) ────────────────────────────────────────
