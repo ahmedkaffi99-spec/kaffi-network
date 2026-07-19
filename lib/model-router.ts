@@ -10,40 +10,40 @@ const openrouter = createOpenAI({
   },
 })
 
-// Rôles → modèles primaires souhaités + fallbacks gratuits vérifiés
-// Analyst + Supervisor : NVIDIA Nemotron Ultra (grand contexte, rigueur)
-// Planner             : NVIDIA Nemotron Super (léger)
-// Writer              : Tencent Hunyuan (262K ctx)
+// Modèles exacts demandés + fallbacks vérifiés via OpenRouter API
+// Analyst + Supervisor : Nemotron 3 Ultra 550B (rigueur max)
+// Planner             : Nemotron 3 Super 120B (léger, rapide)
+// Writer              : Tencent Hy3 (262K ctx)
 const ANALYST_MODELS = [
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra 1M (primaire)
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super (fallback)
-  'qwen/qwen-2.5-72b-instruct:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
 ]
 
 const SUPERVISOR_MODELS = [
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra 1M (primaire)
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super (fallback)
-  'qwen/qwen-2.5-72b-instruct:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-4-26b-a4b-it:free',
 ]
 
 const PLANNER_MODELS = [
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',    // Nemotron Super ~540ms (primaire)
-  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',   // Nemotron Ultra (fallback)
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'meta-llama/llama-3.2-3b-instruct:free',
 ]
 
 const WRITER_MODELS = [
-  'tencent/hunyuan-a13b-instruct:free',             // Tencent Hy3 262K (primaire)
-  'qwen/qwen-2.5-72b-instruct:free',
+  'tencent/hy3:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'google/gemma-4-31b-it:free',
   'meta-llama/llama-3.3-70b-instruct:free',
-  'nvidia/llama-3.3-nemotron-super-49b-v1:free',
-  'mistralai/mistral-7b-instruct:free',
+  'meta-llama/llama-3.2-3b-instruct:free',
 ]
 
 export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
