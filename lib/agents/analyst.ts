@@ -1,10 +1,8 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { routeCompletion } from '@/lib/model-router'
 import type { PlannerOutput, AnalystOutput } from '@/lib/types'
 import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type TeamMatchResult } from '@/lib/tools/football-api'
 import { getTodayOdds, findMatchOdds } from '@/lib/tools/odds-api'
 import { getAllPerformance, formatMemoryContext } from '@/lib/tools/memory'
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 const MIN_TREND_PCT = 80
 const MIN_SAMPLE = 8
@@ -113,34 +111,24 @@ Réponds UNIQUEMENT avec un JSON valide :
   "summary": "string (2-3 phrases sur la sélection du jour)"
 }`
 
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2048,
-    system: systemPrompt,
-    messages: [
-      {
-        role: 'user',
-        content: `Focus du Planner : ${plannerOutput.focus_areas.join(', ')}
+  const userMessage = `Focus du Planner : ${plannerOutput.focus_areas.join(', ')}
 Contexte : ${plannerOutput.context}
 
 Données des matchs :
-${enriched.join('\n\n')}`,
-      },
-    ],
-  })
+${enriched.join('\n\n')}`
 
-  const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : '{}'
-  const jsonStr = raw.startsWith('{') ? raw : raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+  const { text, model_used } = await routeCompletion('analyst', systemPrompt, userMessage, 2048)
+  const jsonStr = text.startsWith('{') ? text : text.replace(/^```json?\n?/, '').replace(/\n?```$/, '')
 
   try {
     const parsed = JSON.parse(jsonStr) as AnalystOutput
-    return { ...parsed, model_used: 'claude-haiku-4-5' }
+    return { ...parsed, model_used }
   } catch {
     return {
       picks_retenus: [],
       picks_rejetés: [],
       summary: 'Erreur de parsing JSON dans la réponse de l\'analyste.',
-      model_used: 'claude-haiku-4-5',
+      model_used,
     }
   }
 }
