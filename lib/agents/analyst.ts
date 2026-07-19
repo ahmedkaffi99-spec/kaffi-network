@@ -18,12 +18,35 @@ function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) =
 }
 
 function extractJson(text: string): string {
+  // Essaie d'abord un bloc ```json ... ```
   const fenceMatch = text.match(/```json?\s*([\s\S]*?)```/)
   if (fenceMatch) return fenceMatch[1].trim()
+
+  // Cherche le premier { et le dernier } correspondant (niveau racine)
   const braceStart = text.indexOf('{')
-  const braceEnd = text.lastIndexOf('}')
-  if (braceStart !== -1 && braceEnd > braceStart) return text.slice(braceStart, braceEnd + 1)
-  return text.trim()
+  if (braceStart === -1) return text.trim()
+
+  let depth = 0
+  let inString = false
+  let escape = false
+  let end = -1
+
+  for (let i = braceStart; i < text.length; i++) {
+    const ch = text[i]
+    if (escape) { escape = false; continue }
+    if (ch === '\\' && inString) { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) { end = i; break } }
+  }
+
+  if (end !== -1) return text.slice(braceStart, end + 1)
+  // JSON tronqué — tente de le fermer
+  const partial = text.slice(braceStart)
+  const opens = (partial.match(/\{/g) ?? []).length
+  const closes = (partial.match(/\}/g) ?? []).length
+  return partial + '}'.repeat(Math.max(0, opens - closes))
 }
 
 function oddsLines(matchOdds: MatchOdds): string[] {
@@ -201,7 +224,7 @@ Contexte : ${plannerOutput.context}
 Données des matchs :
 ${enriched.join('\n\n')}`
 
-  const { text, model_used } = await routeCompletion('analyst', systemPrompt, userMessage, 2048)
+  const { text, model_used } = await routeCompletion('analyst', systemPrompt, userMessage, 4096)
   const jsonStr = extractJson(text)
 
   try {
