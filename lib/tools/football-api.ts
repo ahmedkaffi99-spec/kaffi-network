@@ -1,7 +1,7 @@
 const BASE_URL = 'https://api.football-data.org/v4'
 
-// Top 8 championnats européens + C1 + EL
-const COMPETITIONS = ['PL', 'BL1', 'SA', 'PD', 'FL1', 'CL', 'EL', 'PPL', 'DED', 'BSA']
+// Championnats européens + Amérique du Sud + Coupes mondiales
+const COMPETITIONS = ['PL', 'BL1', 'SA', 'PD', 'FL1', 'CL', 'EL', 'ELC', 'PPL', 'DED', 'BSA', 'CLI', 'WC']
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 

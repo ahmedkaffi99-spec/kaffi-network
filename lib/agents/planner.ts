@@ -3,8 +3,8 @@ import type { PlannerOutput } from '@/lib/types'
 
 const COMPETITIONS = [
   'Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1',
-  'Champions League', 'Europa League', 'Conference League',
-  'Championship', 'Serie B', 'Liga Portugal', 'Eredivisie',
+  'Champions League', 'Europa League', 'Championship', 'Liga Portugal', 'Eredivisie',
+  'Campeonato Brasileiro', 'Copa Libertadores', 'FIFA World Cup',
 ]
 
 export async function runPlanner(date: string): Promise<PlannerOutput> {
