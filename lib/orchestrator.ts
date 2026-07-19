@@ -21,16 +21,25 @@ export interface OrchestratorResult {
 export async function runPipeline(date?: string): Promise<OrchestratorResult> {
   const targetDate = date ?? new Date().toISOString().split('T')[0]
 
-  // Supprimer les sessions draft/rejected du jour avant d'en créer une nouvelle
-  await adminSupabase
+  // Vérifie si une session publiée existe déjà pour ce jour
+  const { data: existing } = await adminSupabase
     .from('pronostic_sessions')
-    .delete()
+    .select('id, status')
     .eq('date', targetDate)
-    .in('status', ['draft', 'rejected'])
+    .eq('status', 'published')
+    .maybeSingle()
 
+  if (existing) {
+    return { success: false, sessionId: existing.id, message: 'Session déjà publiée pour ce jour.' }
+  }
+
+  // Upsert sur la date : réinitialise la session si elle existe déjà (draft/rejected)
   const { data: session, error: sessionError } = await adminSupabase
     .from('pronostic_sessions')
-    .insert({ date: targetDate, status: 'draft', iterations: 0 })
+    .upsert(
+      { date: targetDate, status: 'draft', iterations: 0 },
+      { onConflict: 'date', ignoreDuplicates: false }
+    )
     .select()
     .single()
 
