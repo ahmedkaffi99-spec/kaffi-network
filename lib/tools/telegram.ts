@@ -28,7 +28,7 @@ export function formatCombinePost(picks: PickCandidate[], combinedOdds: number):
   lines.push('')
   lines.push(`*Cote combinée : ${escapeV2(combinedOdds.toFixed(2))}*`)
   lines.push('')
-  lines.push(`👉 Place ce combiné ici : ${process.env.AFFILIATE_LINK ?? ''}`)
+  lines.push(`👉 Place ce combiné ici : ${escapeV2(process.env.AFFILIATE_LINK ?? '')}`)
   lines.push('')
   lines.push(
     `⚠️ _Plus un combiné a de matchs, plus le risque augmente\\. Aucune prédiction sportive n'est garantie\\._`
