@@ -114,30 +114,20 @@ export async function getTodayMatches(): Promise<TodayMatch[]> {
     .map(mapFixtureToTodayMatch)
 }
 
-// Plan gratuit API-Football : saisons disponibles 2022-2024, pas de paramètre `last`
-// Rate limit : 10 requêtes/minute → sleep 7s entre les appels d'historique
+// Plan gratuit : saisons 2022-2024 disponibles, pas de `last`, rate limit 10 req/min
 const RATE_LIMIT_SLEEP = 7000
-const AVAILABLE_SEASONS = [2024, 2023, 2022]
 
 /**
- * Récupère l'historique des derniers matchs d'une équipe.
- * Utilise season=2024 → 2023 → 2022 jusqu'à obtenir ≥8 matchs terminés.
- * Coût : 1 à 3 requêtes API selon les données disponibles.
+ * Récupère l'historique de l'équipe sur la saison 2024 (plan gratuit).
+ * Coût : 1 requête par équipe.
  */
 async function getTeamHistory(teamId: number, limit = 15): Promise<TeamMatchResult[]> {
-  let finished: ApiFixtureEntry[] = []
-
-  for (const season of AVAILABLE_SEASONS) {
-    await sleep(RATE_LIMIT_SLEEP)
-    const data = await trackRequest<ApiFixturesResponse>(
-      `/fixtures?team=${teamId}&season=${season}`,
-      1
-    )
-    const seasonFinished = data.response.filter(e => FINISHED_STATUSES.includes(e.fixture.status.short))
-    finished = [...finished, ...seasonFinished]
-    if (finished.length >= 8) break
-  }
-
+  await sleep(RATE_LIMIT_SLEEP)
+  const data = await trackRequest<ApiFixturesResponse>(
+    `/fixtures?team=${teamId}&season=2024`,
+    1
+  )
+  const finished = data.response.filter(e => FINISHED_STATUSES.includes(e.fixture.status.short))
   return finished
     .sort((a, b) => b.fixture.date.localeCompare(a.fixture.date))
     .slice(0, limit)
@@ -164,8 +154,8 @@ export async function buildMatchAnalysisData(
   const result: MatchAnalysisData[] = []
 
   const SAFETY_MARGIN = 5
-  // Worst-case : 3 appels par équipe (3 saisons disponibles)
-  const COST_PER_TEAM = 3
+  // 1 appel par équipe (1 seule saison sur le plan gratuit)
+  const COST_PER_TEAM = 1
   let remaining = await getRemainingQuota('api-football')
 
   const limited = matches.slice(0, MAX_MATCHES_TO_ANALYZE)
