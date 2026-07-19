@@ -46,7 +46,7 @@ export async function generateTicketImage(
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
 
-  const cardHeight = 58
+  const cardHeight = 76
   const totalHeight = 156 + picks.length * cardHeight + 70
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,7 +179,8 @@ export async function generateTicketImage(
                                     ],
                                   },
                                 },
-                                { type: 'span', props: { style: { color: '#7c8aab', fontSize: '11px', marginTop: '3px' }, children: `${pick.bet_type} · ${pick.trend_pct}% sur ${pick.sample_size} matchs` } },
+                                { type: 'span', props: { style: { color: '#c9a35c', fontSize: '11px', fontWeight: 600, marginTop: '3px' }, children: pick.bet_type } },
+                                { type: 'span', props: { style: { color: '#7c8aab', fontSize: '10px', marginTop: '2px' }, children: pick.trend_label } },
                               ],
                             },
                           },
