@@ -15,18 +15,18 @@ const openrouter = createOpenAI({
 // Planner             : Nemotron 3 Super 120B (léger, rapide)
 // Writer              : Tencent Hy3 (262K ctx)
 const ANALYST_MODELS = [
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nousresearch/hermes-3-llama-3.1-405b:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-235b-a22b-instruct:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
   'qwen/qwen3-next-80b-a3b-instruct:free',
 ]
 
 const SUPERVISOR_MODELS = [
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nousresearch/hermes-3-llama-3.1-405b:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-235b-a22b-instruct:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
   'google/gemma-4-26b-a4b-it:free',
 ]
 
