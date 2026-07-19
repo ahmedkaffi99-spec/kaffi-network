@@ -17,19 +17,13 @@ const MISSION: AgentMission = {
 }
 
 const MAX_BOOKMAKER_SPREAD = 0.20
-export const MIN_PICKS_PER_COMBO = 2
-
-export interface TierRange {
-  tier: Tier
-  min: number
-  max: number
-}
-
-export const TIER_RANGES: TierRange[] = [
-  { tier: 'prudent', min: 5, max: 30 },
-  { tier: 'equilibre', min: 31, max: 70 },
-  { tier: 'audacieux', min: 70, max: Infinity },
-]
+// Chaque combiné (coupon) contient entre 8 et 15 matchs — pas une plage de
+// cote. Les 3 paliers piochent dans le même pool de picks fiables mais
+// selon des critères de risque différents (cote par match, pas cote
+// combinée) : prudent = cotes les plus basses, audacieux = cotes les plus
+// hautes, équilibré = mélange des deux extrémités.
+export const MIN_PICKS_PER_COMBO = 8
+export const MAX_PICKS_PER_COMBO = 15
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
@@ -84,43 +78,64 @@ async function selectReliableOdds(
   return { reliable, excluded }
 }
 
+function combinedOddsOf(picks: ReliablePick[]): number {
+  return Math.round(picks.reduce((acc, p) => acc * p.odds, 1) * 100) / 100
+}
+
+/** Alterne du bas puis du haut d'une liste triée par cote croissante — mélange équilibré des risques. */
+function interleaveFromBothEnds(sortedAsc: ReliablePick[], count: number): ReliablePick[] {
+  const result: ReliablePick[] = []
+  let lo = 0
+  let hi = sortedAsc.length - 1
+  let takeLow = true
+
+  while (result.length < count && lo <= hi) {
+    result.push(takeLow ? sortedAsc[lo++] : sortedAsc[hi--])
+    takeLow = !takeLow
+  }
+
+  return result
+}
+
+function buildCombo(tier: Tier, picks: ReliablePick[], reasonSuffix: string, decisions: TierDecision[]): TierCombo {
+  for (const p of picks) {
+    decisions.push({ match: matchLabel(p), tier, included: true, reason: `Sélectionné — ${reasonSuffix}` })
+  }
+  return { tier, picks, combined_odds: combinedOddsOf(picks) }
+}
+
 /**
- * ÉTAPE 2 — composition des 3 combinés. Les picks sont partagés entre
- * paliers (le même pick peut entrer dans plusieurs combinés) : chaque
- * palier construit indépendamment le combo maximal qui tient sous son
- * plafond, à partir du même pool trié par confiance décroissante. Le palier
- * audacieux n'a pas de plafond — sa cote combinée peut dépasser x70 sans
- * limite artificielle si assez de picks fiables sont disponibles.
+ * ÉTAPE 2 — composition des 3 combinés. Chaque coupon contient entre 8 et
+ * 15 matchs (pas une plage de cote) : les picks sont partagés entre paliers
+ * (un même match peut entrer dans plusieurs coupons), et ce qui différencie
+ * les paliers est le NIVEAU DE RISQUE des matchs choisis, pas la cote
+ * combinée finale (qui sera de toute façon élevée pour les 3 avec 8-15
+ * matchs) — prudent pioche les cotes individuelles les plus basses,
+ * audacieux les plus hautes, équilibré un mélange des deux.
  */
 function composeTiers(reliable: ReliablePick[]): { combos: Partial<Record<Tier, TierCombo>>; decisions: TierDecision[] } {
-  const sorted = [...reliable].sort((a, b) => b.trend_pct - a.trend_pct)
   const combos: Partial<Record<Tier, TierCombo>> = {}
   const decisions: TierDecision[] = []
 
-  for (const range of TIER_RANGES) {
-    const combo: ReliablePick[] = []
-    let combinedOdds = 1
-
-    for (const pick of sorted) {
-      const projected = combinedOdds * pick.odds
-      if (projected <= range.max) {
-        combo.push(pick)
-        combinedOdds = projected
-        decisions.push({ match: matchLabel(pick), tier: range.tier, included: true, reason: `Combiné à ${combinedOdds.toFixed(2)} — dans la plage ${range.tier}` })
-      } else {
-        decisions.push({
-          match: matchLabel(pick),
-          tier: range.tier,
-          included: false,
-          reason: `Ajout ferait dépasser ${range.max === Infinity ? '∞' : range.max} (combiné projeté ${projected.toFixed(2)})`,
-        })
-      }
+  if (reliable.length < MIN_PICKS_PER_COMBO) {
+    for (const tier of ['prudent', 'equilibre', 'audacieux'] as Tier[]) {
+      decisions.push({
+        match: '—',
+        tier,
+        included: false,
+        reason: `Seulement ${reliable.length} picks fiables — minimum ${MIN_PICKS_PER_COMBO} requis pour un coupon`,
+      })
     }
-
-    if (combo.length >= MIN_PICKS_PER_COMBO && combinedOdds >= range.min) {
-      combos[range.tier] = { tier: range.tier, picks: combo, combined_odds: Math.round(combinedOdds * 100) / 100 }
-    }
+    return { combos, decisions }
   }
+
+  const byOddsAsc = [...reliable].sort((a, b) => a.odds - b.odds)
+  const byOddsDesc = [...byOddsAsc].reverse()
+  const count = Math.min(MAX_PICKS_PER_COMBO, reliable.length)
+
+  combos.prudent = buildCombo('prudent', byOddsAsc.slice(0, count), 'cote individuelle parmi les plus basses du pool', decisions)
+  combos.audacieux = buildCombo('audacieux', byOddsDesc.slice(0, count), 'cote individuelle parmi les plus hautes du pool', decisions)
+  combos.equilibre = buildCombo('equilibre', interleaveFromBothEnds(byOddsAsc, count), 'mélange de cotes basses et hautes du pool', decisions)
 
   return { combos, decisions }
 }
@@ -147,7 +162,7 @@ export async function decide(candidates: PickCandidate[], blackboard: Blackboard
       type: 'decision',
       content: combo
         ? `Palier ${tier} : ${combo.picks.length} picks, cote combinée ${combo.combined_odds}.`
-        : `Palier ${tier} non généré aujourd'hui — cote atteignable insuffisante avec les picks fiables du jour.`,
+        : `Palier ${tier} non généré aujourd'hui — moins de ${MIN_PICKS_PER_COMBO} picks fiables disponibles.`,
     })
   }
 

@@ -2,7 +2,7 @@ import { parseAgentJSON, callAgentModel, renderMission } from '@/lib/agent-kerne
 import type { Blackboard } from '@/lib/agent-kernel/blackboard'
 import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { TierCombo } from '@/lib/types'
-import { TIER_RANGES, MIN_PICKS_PER_COMBO } from './odds-selector'
+import { MIN_PICKS_PER_COMBO, MAX_PICKS_PER_COMBO } from './odds-selector'
 
 const MISSION: AgentMission = {
   role: 'supervisor',
@@ -28,18 +28,13 @@ export interface SupervisorTierResult {
 function deterministicChecks(combo: TierCombo, writerOutput: string): string[] {
   const issues: string[] = []
 
-  if (combo.picks.length < MIN_PICKS_PER_COMBO) {
-    issues.push(`Nombre de picks insuffisant : ${combo.picks.length} (min ${MIN_PICKS_PER_COMBO})`)
+  if (combo.picks.length < MIN_PICKS_PER_COMBO || combo.picks.length > MAX_PICKS_PER_COMBO) {
+    issues.push(`Nombre de picks hors plage : ${combo.picks.length} (attendu ${MIN_PICKS_PER_COMBO}–${MAX_PICKS_PER_COMBO})`)
   }
 
   const matchKeys = combo.picks.map(p => `${p.home_team}-${p.away_team}`)
   if (matchKeys.length !== new Set(matchKeys).size) {
     issues.push('Doublons : même match sélectionné plusieurs fois dans ce combiné')
-  }
-
-  const range = TIER_RANGES.find(r => r.tier === combo.tier)
-  if (range && (combo.combined_odds < range.min || combo.combined_odds > range.max)) {
-    issues.push(`Cote combinée ${combo.combined_odds} hors de la plage déclarée du palier ${combo.tier} (${range.min}–${range.max === Infinity ? '∞' : range.max})`)
   }
 
   const writerLower = writerOutput.toLowerCase()
@@ -81,7 +76,7 @@ VÉRIFICATIONS OBLIGATOIRES SUR LE POST REÇU :
 2. Cohérence entre le texte du post et les picks du combiné (aucun pick omis, ajouté ou déformé)
 3. Absence de contradictions (ex: over ET under sur le même match)
 4. Aucune promesse de gain déguisée qui contournerait l'esprit de l'interdiction "garanti/sûr à 100%/infaillible" même reformulée autrement
-5. Ton proportionné au risque : un palier audacieux (cote combinée élevée) doit clairement communiquer le risque, pas le minimiser
+5. Ton proportionné au risque : les 3 paliers ont tous une grosse cote combinée (8 à 15 matchs) — le risque réel se juge à la cote individuelle des picks (palier audacieux = cotes par match plus hautes, donc plus incertaines), le post doit le refléter sans minimiser
 
 Sois STRICT : un doute = revision_needed.
 Réponds UNIQUEMENT avec du JSON valide.`

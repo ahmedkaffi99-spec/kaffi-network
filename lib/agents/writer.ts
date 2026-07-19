@@ -33,6 +33,7 @@ export async function runWriter(
     .join('\n')
 
   const tierLabel = TIER_LABELS[combo.tier] ?? combo.tier
+  const avgPickOdds = combo.picks.reduce((s, p) => s + p.odds, 0) / combo.picks.length
 
   const system = `${renderMission(MISSION)}
 
@@ -45,14 +46,14 @@ Règles MarkdownV2 : échappe ces caractères avec \\ : _ * [ ] ( ) ~ \` > # + -
 
 ${picksText}
 
-Cote combinée : ${combo.combined_odds.toFixed(2)}
+Cote combinée : ${combo.combined_odds.toFixed(2)} (${combo.picks.length} matchs, cote moyenne par match ${avgPickOdds.toFixed(2)})
 
 Structure du post :
-1. Accroche percutante (1 ligne), mentionne le palier "${tierLabel}" (ex: risque maîtrisé pour prudent, ambitieux pour audacieux)
+1. Accroche percutante (1 ligne), mentionne le palier "${tierLabel}" — le risque du palier se juge à la cote MOYENNE PAR MATCH (${avgPickOdds.toFixed(2)}), pas à la cote combinée (qui est grosse pour les 3 paliers vu le nombre de matchs) : prudent = cote par match basse/tendance forte, audacieux = cote par match plus haute/plus incertaine
 2. Chaque pick avec emoji numéroté (1️⃣ 2️⃣ etc.), match en gras, type de pari, cote, tendance courte
-3. Cote combinée mise en valeur
+3. Cote combinée mise en valeur, en rappelant que ${combo.picks.length} résultats doivent tous se réaliser
 4. CTA discret avec lien affilié : ${process.env.AFFILIATE_LINK ?? ''}
-5. Disclaimer court sur le pari responsable — plus appuyé si le palier est audacieux (cote combinée élevée = risque élevé)
+5. Disclaimer clair sur le pari responsable, proportionné à la cote moyenne par match — plus appuyé si le palier est audacieux
 
 Réponds UNIQUEMENT avec le texte du post, prêt à envoyer.`
 
