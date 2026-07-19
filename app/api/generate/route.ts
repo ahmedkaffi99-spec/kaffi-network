@@ -1,22 +1,20 @@
 import { NextResponse } from 'next/server'
-import { generateDailyPronostics } from '@/lib/generator'
 import { createClient } from '@/lib/supabase/server'
+import { runPipeline } from '@/lib/orchestrator'
 
-export async function POST() {
+export const maxDuration = 300
+
+export async function POST(request: Request) {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
     return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
   }
 
-  try {
-    const session = await generateDailyPronostics()
-    return NextResponse.json({ success: true, session })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Erreur interne du serveur'
-    return NextResponse.json({ error: message }, { status: 500 })
-  }
+  const body = await request.json().catch(() => ({}))
+  const date = typeof body?.date === 'string' ? body.date : undefined
+
+  const result = await runPipeline(date)
+  return NextResponse.json(result, { status: result.success ? 200 : 422 })
 }
