@@ -206,6 +206,9 @@ function matchOutcome(
   if (bt.includes('victoire') && (bt.includes('extérieur') || bt.includes('exterieur') || bt.includes('away'))) {
     return { marketKey: 'h2h', matches: n => teamSimilarity(n, awayTeam) >= 0.3 }
   }
+  if (bt.includes('nul') || bt.includes('draw')) {
+    return { marketKey: 'h2h', matches: n => n.toLowerCase().includes('draw') }
+  }
 
   // BTTS et autres marchés non couverts par le plan gratuit The Odds API
   return null

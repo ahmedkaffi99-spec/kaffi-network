@@ -35,6 +35,34 @@ function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) =
   return { pct: Math.round((matching / history.length) * 100), count: history.length }
 }
 
+// history est trié du plus récent au plus ancien (voir football-api.ts) —
+// ces helpers de forme récente dépendent de cet ordre.
+function winStreak(history: TeamMatchResult[]): number {
+  let streak = 0
+  for (const m of history) {
+    if (m.result !== 'W') break
+    streak++
+  }
+  return streak
+}
+
+function unbeatenStreak(history: TeamMatchResult[], n: number): boolean {
+  const recent = history.slice(0, n)
+  return recent.length === n && recent.every(m => m.result !== 'L')
+}
+
+function formPoints(history: TeamMatchResult[], n: number): { points: number; max: number } {
+  const recent = history.slice(0, n)
+  const points = recent.reduce((s, m) => s + (m.result === 'W' ? 3 : m.result === 'D' ? 1 : 0), 0)
+  return { points, max: recent.length * 3 }
+}
+
+function avgGoals(history: TeamMatchResult[], n: number, key: 'goals_for' | 'goals_against'): number {
+  const recent = history.slice(0, n)
+  if (!recent.length) return 0
+  return Math.round((recent.reduce((s, m) => s + m[key], 0) / recent.length) * 10) / 10
+}
+
 function oddsLines(matchOdds: MatchOdds): string[] {
   const lines: string[] = []
   const { home, draw, away } = matchOdds.h2h
@@ -114,6 +142,19 @@ export async function gatherAnalystContext(
       const awayBtts = calcTrend(awayH, m => m.goals_for > 0 && m.goals_against > 0)
       const homeBtts = calcTrend(homeH, m => m.goals_for > 0 && m.goals_against > 0)
       const homeWins = calcTrend(homeH, m => m.result === 'W' && m.home)
+      // Nouveaux types de pari publiables (cotes déjà récupérées via
+      // oddsLines — "Victoire extérieur" et "Match nul" — mais jamais
+      // proposés faute de tendance calculée jusqu'ici).
+      const awayWins = calcTrend(awayH, m => m.result === 'W' && !m.home)
+      const homeDraws = calcTrend(homeH, m => m.result === 'D')
+      const awayDraws = calcTrend(awayH, m => m.result === 'D')
+      // Tendances de contexte — renforcent le raisonnement, pas de nouveau
+      // type de pari (pas de cote bookmaker dédiée disponible pour celles-ci).
+      const homeCleanSheet = calcTrend(homeH, m => m.goals_against === 0)
+      const awayCleanSheet = calcTrend(awayH, m => m.goals_against === 0)
+      const homeBigWin = calcTrend(homeH, m => m.result === 'W' && m.goals_for - m.goals_against >= 2)
+      const homeForm5 = formPoints(homeH, 5)
+      const awayForm5 = formPoints(awayH, 5)
 
       const lines = oddsLines(matchOdds)
       if (!lines.length) continue
@@ -124,8 +165,10 @@ export async function gatherAnalystContext(
       ])
 
       enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
-Domicile ${match.home_team.name} (${homeH.length} matchs): over2.5=${homeOver25.pct}%, under2.5=${homeUnder25.pct}%, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%
-Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, btts=${awayBtts.pct}%
+Domicile ${match.home_team.name} (${homeH.length} matchs): over2.5=${homeOver25.pct}%, under2.5=${homeUnder25.pct}%, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%, nul=${homeDraws.pct}%, cage_inviolee=${homeCleanSheet.pct}%, victoire_large(2+ buts)=${homeBigWin.pct}%
+Extérieur ${match.away_team.name} (${awayH.length} matchs): over2.5=${awayOver25.pct}%, btts=${awayBtts.pct}%, wins_ext=${awayWins.pct}%, nul=${awayDraws.pct}%, cage_inviolee=${awayCleanSheet.pct}%
+Forme récente ${match.home_team.name} (5 derniers): ${homeForm5.points}/${homeForm5.max} pts, ${avgGoals(homeH, 5, 'goals_for')} buts marqués/match, ${avgGoals(homeH, 5, 'goals_against')} encaissés/match, série de victoires en cours=${winStreak(homeH)}, invaincu sur 5=${unbeatenStreak(homeH, 5) ? 'oui' : 'non'}
+Forme récente ${match.away_team.name} (5 derniers): ${awayForm5.points}/${awayForm5.max} pts, ${avgGoals(awayH, 5, 'goals_for')} buts marqués/match, ${avgGoals(awayH, 5, 'goals_against')} encaissés/match, série de victoires en cours=${winStreak(awayH)}, invaincu sur 5=${unbeatenStreak(awayH, 5) ? 'oui' : 'non'}
 Actualités ${match.home_team.name}: ${homeNews}
 Actualités ${match.away_team.name}: ${awayNews}
 Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
@@ -239,8 +282,11 @@ SOURCES DE DONNÉES :
 - API-Football (champs Domicile/Extérieur avec %) : SEULE source pour les statistiques chiffrées.
 - Serper (champ Actualités) : contexte QUALITATIF uniquement — blessures, suspensions. Jamais de stat.
 
+TYPES DE PARI DISPONIBLES (avec cote réelle) : Victoire domicile, Victoire extérieur, Match nul, Plus de 2.5, Moins de 2.5 — choisis celui dont la tendance chiffrée est la plus solide pour CE match, pas toujours le même type par réflexe.
+TENDANCES DE CONTEXTE (jamais un type de pari en soi, mais renforcent ou affaiblissent ta confiance) : nul, cage_inviolee, victoire_large, forme récente (points/5, buts marqués/encaissés par match, série de victoires, invaincu sur 5) — utilise-les pour départager deux picks proches en tendance principale, jamais pour justifier un pick qui ne respecte pas la règle 1 ci-dessous.
+
 RÈGLES ABSOLUES :
-1. Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs (API-Football uniquement)
+1. Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs (API-Football uniquement) — s'applique au type de pari choisi (ex: wins_ext pour "Victoire extérieur", nul pour "Match nul"), pas à une tendance de contexte
 2. Cote entre ${MIN_ODDS} et ${MAX_ODDS}
 3. Maximum ${MAX_PICKS} picks
 4. Blessure/suspension clé détectée = pick rejeté

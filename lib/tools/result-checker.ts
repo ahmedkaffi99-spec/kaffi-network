@@ -47,6 +47,7 @@ function evaluateResult(
 
   if (bt.includes('victoire') && bt.includes('domicile')) return homeGoals > awayGoals ? 'win' : 'loss'
   if (bt.includes('victoire') && bt.includes('extérieur')) return awayGoals > homeGoals ? 'win' : 'loss'
+  if (bt.includes('nul') || bt.includes('draw')) return homeGoals === awayGoals ? 'win' : 'loss'
 
   // Victoire [nom équipe] — domicile si nommée, sinon void
   if (bt.startsWith('victoire ')) {
