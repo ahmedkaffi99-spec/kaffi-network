@@ -14,12 +14,20 @@ const openrouter = createOpenAI({
 // Analyst + Supervisor : Nemotron 3 Ultra 550B (rigueur max)
 // Planner             : Nemotron 3 Super 120B (léger, rapide)
 // Writer              : Tencent Hy3 (262K ctx)
+// poolside/laguna-xs-2.1:free et cohere/north-mini-code:free — modèles
+// "coding agent" (33B-A3B / 30B MoE), gros contexte (256K/262K), ajoutés en
+// fin de chaîne sur les 4 rôles : bonne discipline JSON, utile en secours
+// si les modèles principaux sont indisponibles. Slugs vérifiés directement
+// sur la page modèle OpenRouter (pas de vérification API possible depuis cet
+// environnement — jamais deviner un slug).
 const ANALYST_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nousresearch/hermes-3-llama-3.1-405b:free',
   'qwen/qwen3-235b-a22b-instruct:free',
   'nvidia/nemotron-3-ultra-550b-a55b:free',
   'qwen/qwen3-next-80b-a3b-instruct:free',
+  'poolside/laguna-xs-2.1:free',
+  'cohere/north-mini-code:free',
 ]
 
 const SUPERVISOR_MODELS = [
@@ -28,6 +36,8 @@ const SUPERVISOR_MODELS = [
   'qwen/qwen3-235b-a22b-instruct:free',
   'nvidia/nemotron-3-ultra-550b-a55b:free',
   'google/gemma-4-26b-a4b-it:free',
+  'poolside/laguna-xs-2.1:free',
+  'cohere/north-mini-code:free',
 ]
 
 const PLANNER_MODELS = [
@@ -36,6 +46,8 @@ const PLANNER_MODELS = [
   'meta-llama/llama-3.3-70b-instruct:free',
   'google/gemma-4-26b-a4b-it:free',
   'meta-llama/llama-3.2-3b-instruct:free',
+  'poolside/laguna-xs-2.1:free',
+  'cohere/north-mini-code:free',
 ]
 
 const WRITER_MODELS = [
@@ -44,6 +56,8 @@ const WRITER_MODELS = [
   'google/gemma-4-31b-it:free',
   'meta-llama/llama-3.3-70b-instruct:free',
   'meta-llama/llama-3.2-3b-instruct:free',
+  'poolside/laguna-xs-2.1:free',
+  'cohere/north-mini-code:free',
 ]
 
 export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
