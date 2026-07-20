@@ -40,8 +40,10 @@ export function PronosticsClient({ sessions }: Props) {
     router.refresh()
   }
 
-  async function handlePublish(id: string) {
-    const res = await fetch(`/api/publish/${id}`, { method: 'POST' })
+  async function handlePublish(id: string, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`/api/publish/${id}`, { method: 'POST', body: formData })
     if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
     router.refresh()
   }

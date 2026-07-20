@@ -44,6 +44,10 @@ export interface PronosticSession {
   created_at: string
   combo_result: 'win' | 'loss' | 'void' | null
   result_posted_at: string | null
+  // Chemin dans le bucket privé Supabase Storage 'manual-tickets' — capture
+  // réelle du coupon 1xBet envoyée par l'utilisateur avant publication (voir
+  // app/api/publish/[sessionId]/route.ts). null tant que rien n'est envoyé.
+  manual_ticket_path: string | null
   picks?: Pick[]
 }
 

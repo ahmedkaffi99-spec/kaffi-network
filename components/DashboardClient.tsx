@@ -45,8 +45,10 @@ export function DashboardClient({ todaySessions, stats }: Props) {
     router.refresh()
   }
 
-  async function handlePublish(id: string) {
-    const res = await fetch(`/api/publish/${id}`, { method: 'POST' })
+  async function handlePublish(id: string, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`/api/publish/${id}`, { method: 'POST', body: formData })
     if (!res.ok) {
       const data = await res.json()
       throw new Error(data.error)

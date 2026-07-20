@@ -4,9 +4,7 @@ import { gatherAnalystContext, reasonAnalystPicks } from '@/lib/agents/analyst'
 import { decide as decideOdds } from '@/lib/agents/odds-selector'
 import { runWriter } from '@/lib/agents/writer'
 import { reviewTier, type SupervisorTierResult } from '@/lib/agents/supervisor'
-import { checkDuplicates, savePublishedMatches } from '@/lib/tools/duplicate-checker'
-import { generateTicketImage } from '@/lib/tools/image-generator'
-import { sendPhoto } from '@/lib/tools/telegram'
+import { checkDuplicates } from '@/lib/tools/duplicate-checker'
 import { Blackboard, createBudget, loadLongTermDigest, persistLongTermLesson, persistRunTranscript } from '@/lib/agent-kernel'
 import type { Tier, TierCombo } from '@/lib/types'
 
@@ -35,7 +33,11 @@ export interface OrchestratorResult {
   tiers: TierResult[]
 }
 
-async function publishTier(params: {
+// Prépare un palier jusqu'à 'approved' — n'envoie plus rien sur Telegram
+// automatiquement. La publication réelle attend maintenant que l'utilisateur
+// envoie sa capture d'écran du coupon réellement misé sur 1xBet (voir
+// app/api/publish/[sessionId]/route.ts), déclenchée depuis le dashboard.
+async function prepareTier(params: {
   date: string
   combo: TierCombo
   blackboard: Blackboard
@@ -44,16 +46,21 @@ async function publishTier(params: {
   const { date, combo, blackboard, budget } = params
   const { tier } = combo
 
+  // 'approved' inclus — sans ça, relancer le run pendant qu'un palier
+  // attend la capture 1xBet de l'utilisateur écraserait ce palier en plein
+  // milieu (nouveaux picks, alors que l'utilisateur est peut-être déjà en
+  // train de miser sur les anciens).
   const { data: existing } = await adminSupabase
     .from('pronostic_sessions')
     .select('id, status')
     .eq('date', date)
     .eq('tier', tier)
-    .eq('status', 'published')
+    .in('status', ['published', 'approved'])
     .maybeSingle()
 
   if (existing) {
-    return { tier, success: false, sessionId: existing.id, message: `Palier ${tier} déjà publié pour ce jour.` }
+    const label = existing.status === 'published' ? 'déjà publié' : 'déjà approuvé, en attente de la capture 1xBet'
+    return { tier, success: false, sessionId: existing.id, message: `Palier ${tier} ${label} pour ce jour.` }
   }
 
   const { data: session, error: sessionError } = await adminSupabase
@@ -131,32 +138,23 @@ async function publishTier(params: {
     )
     if (picksError) throw new Error(`Erreur insertion picks (${tier}) : ${picksError.message}`)
 
-    // ── Image ticket + envoi Telegram — le post envoyé est celui validé par
-    //    le Superviseur (writerOutput), pas une reformulation déterministe ──
-    const imageBuffer = await generateTicketImage(combo.picks, combo.combined_odds, date)
-    const telegramMsgId = await sendPhoto(imageBuffer, writerOutput)
-    blackboard.post({ from: 'orchestrator', type: 'action', content: `Palier ${tier} publié sur Telegram — message #${telegramMsgId}.` })
-
+    // ── S'arrête à 'approved' — plus d'envoi Telegram automatique ici. La
+    //    publication attend la capture réelle du coupon misé sur 1xBet,
+    //    envoyée depuis le dashboard (app/api/publish/[sessionId]/route.ts).
     await adminSupabase
       .from('pronostic_sessions')
-      .update({
-        status: 'published',
-        combined_odds: combo.combined_odds,
-        published_at: new Date().toISOString(),
-        telegram_msg_id: telegramMsgId,
-      })
+      .update({ status: 'approved', combined_odds: combo.combined_odds })
       .eq('id', sessionId)
 
-    await savePublishedMatches(combo.picks, sessionId, tier)
+    blackboard.post({ from: 'orchestrator', type: 'action', content: `Palier ${tier} approuvé — en attente de la capture 1xBet pour publication.` })
 
     return {
       tier,
       success: true,
       sessionId,
-      message: `Palier ${tier} publié — ${combo.picks.length} picks, cote ${combo.combined_odds}.`,
+      message: `Palier ${tier} approuvé — ${combo.picks.length} picks, cote ${combo.combined_odds}. En attente de la capture 1xBet.`,
       picksCount: combo.picks.length,
       combinedOdds: combo.combined_odds,
-      telegramMsgId,
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -210,10 +208,11 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
       return { success: false, message: 'Aucun palier constructible aujourd\'hui (cotes fiables insuffisantes).', tiers: [] }
     }
 
-    // ── Par palier : Rédacteur ⇄ Superviseur (retry borné), publication ─────
+    // ── Par palier : Rédacteur ⇄ Superviseur (retry borné), puis approbation
+    //    (la publication réelle attend la capture 1xBet de l'utilisateur) ───
     const tierResults: TierResult[] = []
     for (const combo of builtTiers) {
-      const result = await publishTier({ date: targetDate, combo, blackboard, budget })
+      const result = await prepareTier({ date: targetDate, combo, blackboard, budget })
       tierResults.push(result)
 
       // Trace la composition/exclusion sur la session pour audit dashboard

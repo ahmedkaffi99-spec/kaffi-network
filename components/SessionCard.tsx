@@ -45,12 +45,14 @@ const COMPETITION_ICONS: Record<string, string> = {
 interface SessionCardProps {
   session: PronosticSession
   onApprove?: (id: string) => Promise<void>
-  onPublish?: (id: string) => Promise<void>
+  onPublish?: (id: string, file: File) => Promise<void>
 }
 
 export function SessionCard({ session, onApprove, onPublish }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
+  const [ticketFile, setTicketFile] = useState<File | null>(null)
+  const [publishError, setPublishError] = useState<string | null>(null)
   const router = useRouter()
   const picks = session.picks ?? []
 
@@ -58,12 +60,25 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
   const lossCount = picks.filter(p => p.result === 'loss').length
   const pendingCount = picks.filter(p => !p.result).length
 
-  async function handleAction(action: 'approve' | 'publish') {
-    setLoading(action)
+  async function handleApprove() {
+    setLoading('approve')
     try {
-      if (action === 'approve') await onApprove?.(session.id)
-      if (action === 'publish') await onPublish?.(session.id)
+      await onApprove?.(session.id)
       router.refresh()
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function handlePublish() {
+    if (!ticketFile) return
+    setLoading('publish')
+    setPublishError(null)
+    try {
+      await onPublish?.(session.id, ticketFile)
+      router.refresh()
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Échec de la publication')
     } finally {
       setLoading(null)
     }
@@ -204,36 +219,42 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           {session.status === 'published' && session.telegram_msg_id && (
             <span className="text-xs text-gray-600">
               ✈️ Publié · msg #{session.telegram_msg_id}
             </span>
           )}
-          {session.status !== 'published' && <div />}
+          {session.status !== 'published' && session.status !== 'approved' && <div />}
 
-          <div className="flex items-center gap-2">
-            {session.status === 'draft' && (
-              <Button
-                size="sm"
-                variant="success"
-                disabled={loading === 'approve'}
-                onClick={() => handleAction('approve')}
-              >
-                {loading === 'approve' ? '...' : '✓ Approuver'}
-              </Button>
-            )}
-            {session.status === 'approved' && (
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={loading === 'publish'}
-                onClick={() => handleAction('publish')}
-              >
-                {loading === 'publish' ? '...' : '🚀 Publier sur Telegram'}
-              </Button>
-            )}
-          </div>
+          {session.status === 'draft' && (
+            <Button size="sm" variant="success" disabled={loading === 'approve'} onClick={handleApprove}>
+              {loading === 'approve' ? '...' : '✓ Approuver'}
+            </Button>
+          )}
+
+          {session.status === 'approved' && (
+            <div className="flex flex-col items-end gap-1.5 w-full sm:w-auto">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <label className="text-xs text-gray-400 px-3 py-2 border border-navy-600/60 rounded-lg cursor-pointer hover:border-navy-500 transition truncate max-w-[220px]">
+                  {ticketFile ? `📎 ${ticketFile.name}` : '📷 Choisir la capture 1xBet'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={e => setTicketFile(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <Button size="sm" variant="primary" disabled={!ticketFile || loading === 'publish'} onClick={handlePublish}>
+                  {loading === 'publish' ? '...' : '🚀 Publier avec ma capture'}
+                </Button>
+              </div>
+              {publishError && <span className="text-xs text-red-400">{publishError}</span>}
+              <span className="text-xs text-gray-600">
+                Envoie une capture du coupon réellement misé sur 1xBet — pas de publication sans capture.
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
