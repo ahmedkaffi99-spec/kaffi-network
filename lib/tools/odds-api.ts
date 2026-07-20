@@ -55,7 +55,10 @@ export interface MatchOdds {
   away_team: string
   commence_time: string
   h2h: { home: number | null; draw: number | null; away: number | null }
-  totals: { over_2_5: number | null; under_2_5: number | null }
+  // Une entrée par ligne de but réellement proposée par les bookmakers
+  // (1.5, 2.5, 3.5...) — jamais figé sur 2.5, chaque ligne a sa propre cote
+  // moyenne pour ne pas mélanger des paris différents entre eux.
+  totals: { point: number; over: number | null; under: number | null }[]
   btts: { yes: number | null; no: number | null }  // toujours null (btts non disponible en plan gratuit)
   // Handicap — seule ligne représentative (celle du premier bookmaker qui en
   // propose une), affichée à titre indicatif. La vérification multi-
@@ -93,6 +96,16 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
       return Math.round((matching.reduce((s, o) => s + o.price, 0) / matching.length) * 100) / 100
     }
 
+    // Une ligne par valeur de point distincte trouvée dans les données —
+    // pas de mélange entre "Over 1.5" et "Over 2.5", ce sont deux paris
+    // différents avec des cotes différentes.
+    const totalsPoints = [...new Set(totalsOutcomes.filter(o => o.point != null).map(o => o.point!))].sort((a, b) => a - b)
+    const totals = totalsPoints.map(point => ({
+      point,
+      over: avgOdds(totalsOutcomes.filter(o => o.point === point && o.name.toLowerCase().includes('over')), 'over'),
+      under: avgOdds(totalsOutcomes.filter(o => o.point === point && o.name.toLowerCase().includes('under')), 'under'),
+    }))
+
     // Ligne représentative (premier bookmaker qui en propose une) — juste
     // pour informer l'Analyste qu'un handicap existe. La cote publiée vient
     // toujours de la vérification multi-bookmaker du Sélecteur de cotes.
@@ -110,10 +123,7 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
         draw: avgOdds(h2hOutcomes, 'draw'),
         away: avgOdds(h2hOutcomes, event.away_team),
       },
-      totals: {
-        over_2_5: avgOdds(totalsOutcomes, 'over'),
-        under_2_5: avgOdds(totalsOutcomes, 'under'),
-      },
+      totals,
       btts: {
         yes: avgOdds(bttsOutcomes, 'yes'),
         no: avgOdds(bttsOutcomes, 'no'),
@@ -212,11 +222,17 @@ function matchOutcome(
 ): { marketKey: string; matches: (outcome: OddsOutcome) => boolean } | null {
   const bt = betType.toLowerCase()
 
-  if (bt.includes('plus de 2.5') || bt.includes('over 2.5')) {
-    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('over') }
+  // "Plus de 1.5", "Over 3.5", etc. — n'importe quelle ligne, matchée par
+  // valeur exacte (jamais mélanger la cote "Over 1.5" avec "Over 2.5").
+  const overMatch = betType.match(/(?:plus de|over)\s*(\d+(?:\.\d+)?)/i)
+  if (overMatch) {
+    const point = parseFloat(overMatch[1])
+    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('over') && o.point != null && Math.abs(o.point - point) < 0.01 }
   }
-  if (bt.includes('moins de 2.5') || bt.includes('under 2.5')) {
-    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('under') }
+  const underMatch = betType.match(/(?:moins de|under)\s*(\d+(?:\.\d+)?)/i)
+  if (underMatch) {
+    const point = parseFloat(underMatch[1])
+    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('under') && o.point != null && Math.abs(o.point - point) < 0.01 }
   }
   if (bt.includes('handicap')) {
     // "Handicap Real Madrid -1.5" — la ligne (point) doit matcher EXACTEMENT
