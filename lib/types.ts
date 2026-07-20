@@ -48,6 +48,10 @@ export interface PronosticSession {
   // réelle du coupon 1xBet envoyée par l'utilisateur avant publication (voir
   // app/api/publish/[sessionId]/route.ts). null tant que rien n'est envoyé.
   manual_ticket_path: string | null
+  // Run du pipeline qui a produit cette session — sert à relier la session
+  // au journal live complet du run (agent_messages.run_id), y compris les
+  // messages du Planificateur/Analyste postés avant que cette session n'existe.
+  run_id: string | null
   picks?: Pick[]
 }
 

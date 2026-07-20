@@ -1,6 +1,7 @@
 import { adminSupabase } from '@/lib/supabase/admin'
 import { getAllPerformance, formatMemoryContext } from '@/lib/tools/memory'
 import type { Blackboard } from './blackboard'
+import type { BlackboardMessage } from './types'
 
 /**
  * Mémoire moyen terme : fenêtre glissante en lecture seule, reconstruite en
@@ -55,6 +56,28 @@ export async function persistLongTermLesson(
       { scope, key, value, confidence: confidence ?? null, updated_at: new Date().toISOString() },
       { onConflict: 'scope,key' }
     )
+}
+
+/**
+ * Persiste UN message du blackboard dès qu'il est posté — c'est ce qui
+ * alimente la vue "live" du dashboard pendant qu'un run tourne (le dashboard
+ * fait un polling sur agent_messages filtré par run_id). session_id reste
+ * toujours null ici : au moment où le Planificateur/Analyste postent, aucune
+ * session n'existe encore. persistRunTranscript() ci-dessous s'occupe
+ * séparément de dupliquer le transcript complet avec le bon session_id une
+ * fois qu'un palier existe, pour la vue "Journal des agents" par session.
+ */
+export async function persistLiveMessage(scope: string, runId: string, message: BlackboardMessage): Promise<void> {
+  await adminSupabase.from('agent_messages').insert({
+    run_id: runId,
+    scope,
+    session_id: null,
+    from_role: message.from,
+    to_role: message.to ?? null,
+    type: message.type,
+    content: message.content,
+    created_at: message.createdAt,
+  })
 }
 
 /**

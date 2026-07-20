@@ -4,7 +4,7 @@ import { runAnalystAndOdds } from '@/lib/agents/analyst'
 import { runWriter } from '@/lib/agents/writer'
 import { checkTierStructure, type SupervisorTierResult } from '@/lib/agents/supervisor'
 import { checkDuplicates } from '@/lib/tools/duplicate-checker'
-import { Blackboard, createBudget, loadLongTermDigest, persistRunTranscript } from '@/lib/agent-kernel'
+import { Blackboard, createBudget, loadLongTermDigest, persistRunTranscript, persistLiveMessage } from '@/lib/agent-kernel'
 import type { Tier, TierCombo } from '@/lib/types'
 
 // Identifie ce crew dans la mémoire long terme et le journal des agents —
@@ -33,6 +33,7 @@ export interface OrchestratorResult {
   success: boolean
   message: string
   tiers: TierResult[]
+  runId: string
 }
 
 // Prépare un palier jusqu'à 'draft' (picks + post rédigés, contrôles
@@ -76,7 +77,10 @@ async function prepareTier(params: {
 
   const { data: session, error: sessionError } = await adminSupabase
     .from('pronostic_sessions')
-    .upsert({ date, tier, status: 'draft', iterations: 0 }, { onConflict: 'date,tier', ignoreDuplicates: false })
+    .upsert(
+      { date, tier, status: 'draft', iterations: 0, run_id: blackboard.runId },
+      { onConflict: 'date,tier', ignoreDuplicates: false }
+    )
     .select()
     .single()
 
@@ -174,10 +178,20 @@ async function prepareTier(params: {
   }
 }
 
-export async function runPipeline(date?: string): Promise<OrchestratorResult> {
+// runId est optionnel : le dashboard en génère un côté navigateur avant
+// d'appeler /api/generate pour pouvoir démarrer le polling de la vue "live"
+// (agent_messages filtré par run_id) avant même que ce run ne commence à
+// poster des messages. Le cron (aucune vue live à alimenter) laisse le
+// kernel en générer un.
+export async function runPipeline(date?: string, runId?: string): Promise<OrchestratorResult> {
   const targetDate = date ?? new Date().toISOString().split('T')[0]
+  const effectiveRunId = runId ?? crypto.randomUUID()
 
-  const blackboard = new Blackboard(crypto.randomUUID())
+  const blackboard = new Blackboard(effectiveRunId, msg => {
+    persistLiveMessage(SCOPE, effectiveRunId, msg).catch(err =>
+      console.error('[orchestrator] échec persistance live du message', err)
+    )
+  })
   // maxModelCalls couvre planner(1) + analyst(1) + jusqu'à 3 paliers ×
   // (MAX_WRITER_ATTEMPTS écrivain + superviseur) — large marge volontaire.
   const budget = createBudget({ maxModelCalls: 32, deadlineMs: 260_000 })
@@ -200,13 +214,13 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     const { analystOutput, oddsSelectorOutput } = await runAnalystAndOdds(plannerOutput, blackboard, budget)
 
     if (!analystOutput.picks_retenus.length || !oddsSelectorOutput) {
-      return { success: false, message: 'Aucun pick candidat retenu par l\'analyste.', tiers: [] }
+      return { success: false, message: 'Aucun pick candidat retenu par l\'analyste.', tiers: [], runId: effectiveRunId }
     }
 
     const builtTiers = ALL_TIERS.map(t => oddsSelectorOutput.combos[t]).filter((c): c is TierCombo => !!c)
 
     if (!builtTiers.length) {
-      return { success: false, message: 'Aucun palier constructible aujourd\'hui (cotes fiables insuffisantes).', tiers: [] }
+      return { success: false, message: 'Aucun palier constructible aujourd\'hui (cotes fiables insuffisantes).', tiers: [], runId: effectiveRunId }
     }
 
     // ── Par palier : Rédacteur ⇄ Superviseur (retry borné), puis approbation
@@ -229,11 +243,11 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     const anySuccess = tierResults.some(t => t.success)
     const summary = tierResults.map(t => t.message).join(' | ')
 
-    return { success: anySuccess, message: summary, tiers: tierResults }
+    return { success: anySuccess, message: summary, tiers: tierResults, runId: effectiveRunId }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     blackboard.post({ from: 'orchestrator', type: 'result', content: `Erreur pipeline : ${msg}` })
-    return { success: false, message: `Erreur pipeline : ${msg}`, tiers: [] }
+    return { success: false, message: `Erreur pipeline : ${msg}`, tiers: [], runId: effectiveRunId }
   } finally {
     // Le blackboard (mémoire court terme) est éphémère — seul son transcript
     // est conservé, dupliqué vers chaque session touchée ce run (voir note

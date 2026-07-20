@@ -2,6 +2,18 @@ export const SPORT_EMOJIS: Record<string, string> = {
   football: '⚽',
 }
 
+// Partagé entre la vue live (components/LiveAgentJournal.tsx) et la vue
+// historique post-run (app/dashboard/pronostics/[id]/page.tsx) — même
+// journal des agents, juste consulté avant ou après la fin du run.
+export const MESSAGE_TYPE_STYLES: Record<string, string> = {
+  observation: 'text-blue-400',
+  plan: 'text-purple-400',
+  decision: 'text-gold-400',
+  reflection: 'text-amber-400',
+  action: 'text-emerald-400',
+  result: 'text-gray-400',
+}
+
 export const STATUS_LABELS: Record<string, string> = {
   draft: 'Brouillon',
   approved: 'Approuvé',

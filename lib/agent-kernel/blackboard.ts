@@ -12,9 +12,14 @@ export class Blackboard {
   private state = new Map<string, unknown>()
   private messages: BlackboardMessage[] = []
   private modelCalls = 0
+  private onMessage?: (msg: BlackboardMessage) => void
 
-  constructor(runId: string) {
+  // onMessage est optionnel — câblé par l'orchestrateur pour persister chaque
+  // message en direct (vue "live" du dashboard), sans que ce module générique
+  // ne connaisse Supabase. Le kernel reste utilisable sans ce callback.
+  constructor(runId: string, onMessage?: (msg: BlackboardMessage) => void) {
     this.runId = runId
+    this.onMessage = onMessage
   }
 
   write<T>(key: string, value: T): void {
@@ -26,7 +31,9 @@ export class Blackboard {
   }
 
   post(msg: { from: AgentRole; to?: AgentRole | 'all'; type: BlackboardMessageType; content: string }): void {
-    this.messages.push({ ...msg, createdAt: new Date().toISOString() })
+    const full = { ...msg, createdAt: new Date().toISOString() }
+    this.messages.push(full)
+    this.onMessage?.(full)
   }
 
   getMessages(filter?: { from?: AgentRole; type?: BlackboardMessageType }): BlackboardMessage[] {

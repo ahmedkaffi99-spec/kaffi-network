@@ -6,6 +6,7 @@ import { StatsWidget } from '@/components/StatsWidget'
 import { SessionCard } from '@/components/SessionCard'
 import { Header } from '@/components/Header'
 import { Button } from '@/components/ui/Button'
+import { LiveAgentJournal } from '@/components/LiveAgentJournal'
 import type { PronosticSession, DashboardStats } from '@/lib/types'
 
 interface Props {
@@ -17,14 +18,20 @@ export function DashboardClient({ todaySessions, stats }: Props) {
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
   const [genResult, setGenResult] = useState<string | null>(null)
+  const [liveRunId, setLiveRunId] = useState<string | null>(null)
   const router = useRouter()
 
   async function handleGenerate() {
+    // runId généré ici, avant l'appel — le composant live démarre son
+    // polling tout de suite, sans attendre que /api/generate réponde (le
+    // pipeline peut prendre plusieurs minutes).
+    const runId = crypto.randomUUID()
+    setLiveRunId(runId)
     setGenerating(true)
     setGenError(null)
     setGenResult(null)
     try {
-      const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? data.message)
       setGenResult(data.message)
@@ -94,6 +101,10 @@ export function DashboardClient({ todaySessions, stats }: Props) {
           <div className="p-4 bg-emerald-900/20 border border-emerald-700/40 rounded-xl text-emerald-400 text-sm">
             {genResult}
           </div>
+        )}
+
+        {liveRunId && (
+          <LiveAgentJournal runId={liveRunId} active={generating} onClose={() => setLiveRunId(null)} />
         )}
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

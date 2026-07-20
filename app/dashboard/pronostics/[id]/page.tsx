@@ -3,16 +3,9 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Header } from '@/components/Header'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
+import { SessionChat } from '@/components/SessionChat'
 import type { PronosticSession, Pick, AgentMessageRow } from '@/lib/types'
-
-const MESSAGE_TYPE_STYLES: Record<string, string> = {
-  observation: 'text-blue-400',
-  plan: 'text-purple-400',
-  decision: 'text-gold-400',
-  reflection: 'text-amber-400',
-  action: 'text-emerald-400',
-  result: 'text-gray-400',
-}
+import { MESSAGE_TYPE_STYLES } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -223,6 +216,9 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
             </CardBody>
           </Card>
         )}
+
+        {/* Chat avec l'Analyste ou le Rédacteur sur cette session */}
+        <SessionChat sessionId={session.id} />
 
         {/* Supervisor notes */}
         {session.supervisor_notes && (
