@@ -6,7 +6,10 @@ import { createClient } from '@/lib/supabase/client'
 
 const navItems = [
   { href: '/dashboard', label: "Vue d'ensemble", icon: '📊', exact: true },
+  { href: '/dashboard/commandement', label: 'Commandement', icon: '🎛️', exact: false },
   { href: '/dashboard/pronostics', label: 'Pronostics', icon: '⚽', exact: false },
+  { href: '/dashboard/chat', label: 'Chat', icon: '💬', exact: false },
+  { href: '/dashboard/suivi', label: 'Suivi des runs', icon: '🛰️', exact: false },
   { href: '/dashboard/stats', label: 'Statistiques', icon: '📈', exact: false },
 ]
 

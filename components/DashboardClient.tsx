@@ -1,110 +1,41 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { StatsWidget } from '@/components/StatsWidget'
-import { SessionCard } from '@/components/SessionCard'
 import { Header } from '@/components/Header'
 import { Button } from '@/components/ui/Button'
-import { LiveAgentJournal } from '@/components/LiveAgentJournal'
-import type { PronosticSession, DashboardStats } from '@/lib/types'
+import type { DashboardStats } from '@/lib/types'
 
 interface Props {
-  todaySessions: PronosticSession[]
   stats: DashboardStats
 }
 
-export function DashboardClient({ todaySessions, stats }: Props) {
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError] = useState<string | null>(null)
-  const [genResult, setGenResult] = useState<string | null>(null)
-  const [liveRunId, setLiveRunId] = useState<string | null>(null)
-  const router = useRouter()
-
-  async function handleGenerate() {
-    // runId généré ici, avant l'appel — le composant live démarre son
-    // polling tout de suite, sans attendre que /api/generate réponde (le
-    // pipeline peut prendre plusieurs minutes).
-    const runId = crypto.randomUUID()
-    setLiveRunId(runId)
-    setGenerating(true)
-    setGenError(null)
-    setGenResult(null)
-    try {
-      const res = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId }) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? data.message)
-      setGenResult(data.message)
-      router.refresh()
-    } catch (err) {
-      setGenError(err instanceof Error ? err.message : 'Erreur lors de la génération')
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  async function handleApprove(id: string) {
-    const res = await fetch(`/api/sessions/${id}/approve`, { method: 'POST' })
-    if (!res.ok) {
-      const data = await res.json()
-      throw new Error(data.error)
-    }
-    router.refresh()
-  }
-
-  async function handleReject(id: string) {
-    const res = await fetch(`/api/sessions/${id}/reject`, { method: 'POST' })
-    if (!res.ok) {
-      const data = await res.json()
-      throw new Error(data.error)
-    }
-    router.refresh()
-  }
-
-  async function handlePublish(id: string, file: File) {
-    const formData = new FormData()
-    formData.append('file', file)
-    const res = await fetch(`/api/publish/${id}`, { method: 'POST', body: formData })
-    if (!res.ok) {
-      const data = await res.json()
-      throw new Error(data.error)
-    }
-    router.refresh()
-  }
-
+// Vue d'ensemble = stats pures. Lancer un run et gérer les combinés du jour
+// (approuver/rejeter/publier) se fait depuis Commandement, voir
+// components/CommandCenterClient.tsx.
+export function DashboardClient({ stats }: Props) {
   return (
     <div>
       <Header
         title="Vue d'ensemble"
         subtitle="Pipeline de pronostics · IA de Pronostics & Coupons"
         actions={
-          <Button
-            variant="primary"
-            size="md"
-            disabled={generating || todaySessions.length >= 3}
-            onClick={handleGenerate}
-          >
-            {generating ? '⏳ Génération...' : todaySessions.length >= 3 ? '✓ Les 3 paliers du jour sont générés' : '⚡ Générer les picks'}
-          </Button>
+          <Link href="/dashboard/commandement">
+            <Button variant="primary" size="md">🎛️ Aller au Commandement</Button>
+          </Link>
         }
       />
 
       <div className="p-4 sm:p-8 space-y-6">
-        {genError && (
-          <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-400 text-sm flex items-start gap-2">
-            <span className="flex-shrink-0">⚠</span>
-            <span>{genError}</span>
+        {stats.pending_review > 0 && (
+          <div className="p-4 bg-gold-500/10 border border-gold-500/25 rounded-xl text-sm flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-gold-300">
+              ⏳ {stats.pending_review} session{stats.pending_review > 1 ? 's' : ''} en attente de ta validation.
+            </span>
+            <Link href="/dashboard/commandement" className="text-gold-400 font-medium hover:text-gold-300 transition">
+              Voir au Commandement →
+            </Link>
           </div>
-        )}
-
-        {genResult && (
-          <div className="p-4 bg-emerald-900/20 border border-emerald-700/40 rounded-xl text-emerald-400 text-sm">
-            {genResult}
-          </div>
-        )}
-
-        {liveRunId && (
-          <LiveAgentJournal runId={liveRunId} active={generating} onClose={() => setLiveRunId(null)} />
         )}
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -124,27 +55,6 @@ export function DashboardClient({ todaySessions, stats }: Props) {
             <StatsWidget label="Gagnés" value={stats.combos_gagnes} sub="Sur les combinés terminés" trend="up" icon="✅" />
             <StatsWidget label="Perdus" value={stats.combos_perdus} sub="Sur les combinés terminés" icon="❌" />
           </div>
-        </div>
-
-        <div>
-          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Combinés du jour
-          </h2>
-          {todaySessions.length ? (
-            <div className="space-y-4">
-              {todaySessions.map(session => (
-                <SessionCard key={session.id} session={session} onApprove={handleApprove} onReject={handleReject} onPublish={handlePublish} />
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center gap-4 p-6 bg-navy-800/40 border border-dashed border-navy-600/50 rounded-2xl">
-              <div className="w-12 h-12 rounded-xl bg-navy-700/60 flex items-center justify-center text-2xl">⚡</div>
-              <div>
-                <div className="text-white font-medium">Aucun combiné généré aujourd&apos;hui</div>
-                <div className="text-sm text-gray-500 mt-0.5">Clique sur &ldquo;Générer les picks&rdquo; pour lancer l&apos;analyse.</div>
-              </div>
-            </div>
-          )}
         </div>
 
         {stats.current_streak > 0 && (

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { DashboardClient } from '@/components/DashboardClient'
-import type { PronosticSession, DashboardStats } from '@/lib/types'
+import type { DashboardStats } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,12 +8,7 @@ export default async function DashboardPage() {
   const supabase = await createClient()
   const today = new Date().toISOString().split('T')[0]
 
-  const [{ data: todaySessions }, { data: sessions }, { data: picks }] = await Promise.all([
-    supabase
-      .from('pronostic_sessions')
-      .select('*, picks(*)')
-      .eq('date', today)
-      .order('tier', { ascending: true }),
+  const [{ data: sessions }, { data: picks }] = await Promise.all([
     supabase
       .from('pronostic_sessions')
       .select('id, date, status, combined_odds, combo_result, picks(result, was_rejected)')
@@ -81,5 +76,5 @@ export default async function DashboardPage() {
     combos_perdus: combosPerdus,
   }
 
-  return <DashboardClient todaySessions={(todaySessions ?? []) as PronosticSession[]} stats={stats} />
+  return <DashboardClient stats={stats} />
 }

@@ -1,5 +1,5 @@
 import { Header } from '@/components/Header'
-import { Skeleton, SkeletonStatsGrid, SkeletonSessionCard } from '@/components/Skeleton'
+import { SkeletonStatsGrid } from '@/components/Skeleton'
 
 export default function DashboardLoading() {
   return (
@@ -8,11 +8,6 @@ export default function DashboardLoading() {
       <div className="p-4 sm:p-8 space-y-6">
         <SkeletonStatsGrid />
         <SkeletonStatsGrid />
-        <div className="space-y-4">
-          <Skeleton className="h-4 w-40" />
-          <SkeletonSessionCard />
-          <SkeletonSessionCard />
-        </div>
       </div>
     </div>
   )
