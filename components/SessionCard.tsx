@@ -56,7 +56,9 @@ export function SessionCard({ session, onApprove, onReject, onPublish }: Session
   const [ticketFile, setTicketFile] = useState<File | null>(null)
   const [publishError, setPublishError] = useState<string | null>(null)
   const router = useRouter()
-  const picks = session.picks ?? []
+  // was_rejected exclut les picks retirés via le chat (voir
+  // app/api/sessions/[id]/apply-change) — même filtre que la page de détail.
+  const picks = (session.picks ?? []).filter(p => !p.was_rejected)
 
   const winCount = picks.filter(p => p.result === 'win').length
   const lossCount = picks.filter(p => p.result === 'loss').length

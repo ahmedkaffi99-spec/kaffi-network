@@ -16,7 +16,7 @@ export default async function DashboardPage() {
       .order('tier', { ascending: true }),
     supabase
       .from('pronostic_sessions')
-      .select('id, date, status, combined_odds, combo_result, picks(result)')
+      .select('id, date, status, combined_odds, combo_result, picks(result, was_rejected)')
       .gte('date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
       .order('date', { ascending: false })
       .limit(60),
@@ -56,7 +56,12 @@ export default async function DashboardPage() {
   const sortedSessions = [...(sessions ?? [])].sort((a, b) => b.date.localeCompare(a.date))
   let streak = 0
   for (const s of sortedSessions) {
-    const sessionPicks = (s.picks as Array<{ result: string | null }> | undefined) ?? []
+    // was_rejected exclut les picks retirés via le chat (voir
+    // app/api/sessions/[id]/apply-change) — leur résultat reste toujours
+    // null, ce qui fausserait "allResolved" sans ce filtre.
+    const sessionPicks = ((s.picks as Array<{ result: string | null; was_rejected: boolean }> | undefined) ?? []).filter(
+      p => !p.was_rejected
+    )
     const hasLoss = sessionPicks.some(p => p.result === 'loss')
     const allResolved = sessionPicks.length > 0 && sessionPicks.every(p => p.result !== null)
     if (allResolved && !hasLoss) streak++

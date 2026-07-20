@@ -218,7 +218,7 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
         )}
 
         {/* Chat avec l'Analyste ou le Rédacteur sur cette session */}
-        <SessionChat sessionId={session.id} />
+        <SessionChat sessionId={session.id} editable={session.status === 'draft'} />
 
         {/* Supervisor notes */}
         {session.supervisor_notes && (

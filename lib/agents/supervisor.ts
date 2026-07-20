@@ -21,6 +21,14 @@ export interface SupervisorTierResult {
   feedback?: string
 }
 
+// Exporté séparément — réutilisé par app/api/sessions/[id]/apply-change pour
+// valider un post réécrit via le chat, sans avoir besoin d'un TierCombo/
+// Blackboard complet comme checkTierStructure ci-dessous.
+export function checkForbiddenWords(text: string): string[] {
+  const lower = text.toLowerCase()
+  return FORBIDDEN_WORDS.filter(w => lower.includes(w))
+}
+
 /**
  * Contrôles structurels déterministes uniquement (plage de picks, doublons,
  * mots interdits). Ne juge ni le ton ni la cohérence du post — c'est
@@ -44,8 +52,7 @@ export function checkTierStructure(
     issues.push('Doublons : même match sélectionné plusieurs fois dans ce combiné')
   }
 
-  const writerLower = writerOutput.toLowerCase()
-  const forbidden = FORBIDDEN_WORDS.filter(w => writerLower.includes(w))
+  const forbidden = checkForbiddenWords(writerOutput)
   if (forbidden.length) {
     issues.push(`Mots interdits dans le post : ${forbidden.join(', ')}`)
   }
