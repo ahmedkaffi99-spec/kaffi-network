@@ -5,6 +5,7 @@ import sharp from 'sharp'
 import type { PickCandidate } from '@/lib/types'
 import { shortenBetType, teamInitials } from '@/lib/tools/display-format'
 import { resolveMatchFlags } from '@/lib/tools/flags'
+import { loadTeamLogoDataUri } from '@/lib/tools/team-logos'
 
 function loadFont(weight: 400 | 700): ArrayBuffer {
   const file = weight === 700 ? 'inter-700.woff' : 'inter-400.woff'
@@ -37,10 +38,8 @@ function numberBadge(n: number) {
   }
 }
 
-// Badge d'initiales — utilisé quand aucun drapeau n'a pu être résolu
-// (compétition/pays non reconnu). Pas de vrai blason de club disponible
-// (ni API-Football en mode cotes-uniquement, ni The Odds API ne fournissent
-// d'URL de logo fiable).
+// Badge d'initiales — dernier repli, quand ni logo ni drapeau n'ont pu être
+// résolus (mode cotes seules, où API-Football n'a pas tourné).
 function initialsBadge(name: string) {
   return {
     type: 'div',
@@ -77,8 +76,25 @@ function flagBadge(dataUri: string) {
   }
 }
 
-function teamMarker(dataUri: string | null, name: string) {
-  return dataUri ? flagBadge(dataUri) : initialsBadge(name)
+// Vrai blason d'équipe (récupéré depuis API-Football, voir lib/tools/team-logos.ts)
+function logoBadge(dataUri: string) {
+  return {
+    type: 'img',
+    props: {
+      src: dataUri,
+      width: 20,
+      height: 20,
+      style: { flexShrink: 0, objectFit: 'contain' as const },
+    },
+  }
+}
+
+// Priorité : vrai blason d'équipe > drapeau > initiales — chaque niveau
+// n'est disponible que si la donnée en amont l'était (jamais inventé).
+function teamMarker(logoDataUri: string | null, flagDataUri: string | null, name: string) {
+  if (logoDataUri) return logoBadge(logoDataUri)
+  if (flagDataUri) return flagBadge(flagDataUri)
+  return initialsBadge(name)
 }
 
 export async function generateTicketImage(
@@ -101,6 +117,12 @@ export async function generateTicketImage(
     const f = flagsByPick[i]
     return f.mode === 'teams' ? f.away : f.mode === 'competition' ? f.flag : null
   })
+
+  // Vrais blasons — uniquement présents si l'Analyste a tourné avec
+  // l'API-Football (jamais en mode cotes seules). null pour un pick sans
+  // logo fait retomber teamMarker() sur le drapeau puis les initiales.
+  const homeLogos = await Promise.all(picks.map(pick => loadTeamLogoDataUri(pick.home_team_logo)))
+  const awayLogos = await Promise.all(picks.map(pick => loadTeamLogoDataUri(pick.away_team_logo)))
 
   const fontData = loadFont(400)
   const fontDataBold = loadFont(700)
@@ -241,11 +263,11 @@ export async function generateTicketImage(
                                         props: {
                                           style: { display: 'flex', alignItems: 'center', gap: '7px', flex: 1, minWidth: 0 },
                                           children: [
-                                            teamMarker(homeMarkers[i], pick.home_team),
+                                            teamMarker(homeLogos[i], homeMarkers[i], pick.home_team),
                                             { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.home_team } },
                                             { type: 'span', props: { style: { color: '#5b6b8c', fontSize: '10px', fontWeight: 700 }, children: 'VS' } },
                                             { type: 'span', props: { style: { color: '#f4f6fb', fontSize: '13px', fontWeight: 700, maxWidth: '128px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: pick.away_team } },
-                                            teamMarker(awayMarkers[i], pick.away_team),
+                                            teamMarker(awayLogos[i], awayMarkers[i], pick.away_team),
                                           ],
                                         },
                                       },

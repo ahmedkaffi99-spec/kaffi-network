@@ -25,7 +25,8 @@ export async function runWriter(
   combo: TierCombo,
   date: string,
   blackboard: Blackboard,
-  budget: RunBudget
+  budget: RunBudget,
+  supervisorFeedback?: string
 ): Promise<string> {
   const picksText = combo.picks
     .map((p, i) => `${i + 1}. ${p.home_team} VS ${p.away_team} (${p.competition})
@@ -67,7 +68,7 @@ Structure du post :
 3. Cote combinée mise en valeur, en rappelant que ${combo.picks.length} résultats doivent tous se réaliser
 4. CTA discret avec lien affilié : ${process.env.AFFILIATE_LINK ?? ''}
 5. Disclaimer clair sur le pari responsable, proportionné à la cote moyenne par match — plus appuyé si le palier est audacieux
-
+${supervisorFeedback ? `\nRETOUR DU SUPERVISEUR SUR LA TENTATIVE PRÉCÉDENTE — corrige précisément ces points, ne reproduis pas le même texte avec des changements cosmétiques :\n${supervisorFeedback}\n` : ''}
 Réponds UNIQUEMENT avec le texte du post, prêt à envoyer.`
 
   const { text } = await callAgentModel('writer', system, userMessage, 800, blackboard, budget)

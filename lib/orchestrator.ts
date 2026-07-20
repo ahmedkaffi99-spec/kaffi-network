@@ -75,7 +75,10 @@ async function publishTier(params: {
 
     while (attempt < MAX_WRITER_ATTEMPTS) {
       attempt++
-      writerOutput = await runWriter(combo, date, blackboard, budget)
+      // review.feedback de la tentative précédente est transmis au Rédacteur —
+      // sans ça, un rejet relançait une réécriture "à l'aveugle" qui pouvait
+      // reproduire les mêmes problèmes (undefined à la 1ère tentative).
+      writerOutput = await runWriter(combo, date, blackboard, budget, review.feedback)
       review = await reviewTier(combo, writerOutput, blackboard, budget)
       if (review.verdict === 'approved') break
     }

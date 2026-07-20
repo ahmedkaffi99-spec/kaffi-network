@@ -54,6 +54,10 @@ export interface AnalystContext {
   enriched: string[]
   oddsOnlyMode: boolean
   memoryContext: string
+  // Nom d'équipe (normalisé) → URL de logo réelle — fourni par API-Football,
+  // jamais par le LLM (qui ne doit jamais inventer une URL). Vide en mode
+  // cotes seules (l'API de cotes ne fournit aucun logo).
+  teamLogos: Map<string, string>
 }
 
 /**
@@ -89,8 +93,14 @@ export async function gatherAnalystContext(
   }
 
   const enriched: string[] = []
+  const teamLogos = new Map<string, string>()
 
   if (!oddsOnlyMode) {
+    for (const { match } of analysisData) {
+      teamLogos.set(match.home_team.name.trim().toLowerCase(), match.home_team.logo)
+      teamLogos.set(match.away_team.name.trim().toLowerCase(), match.away_team.logo)
+    }
+
     for (const { match, home_team_last_matches, away_team_last_matches } of analysisData) {
       const matchOdds = findMatchOdds(odds, match.home_team.name, match.away_team.name)
       if (!matchOdds) continue
@@ -155,7 +165,7 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${im
     content: `${enriched.length} matchs analysés (mode ${oddsOnlyMode ? 'cotes seules' : 'complet'}).`,
   })
 
-  return { enriched, oddsOnlyMode, memoryContext }
+  return { enriched, oddsOnlyMode, memoryContext, teamLogos }
 }
 
 /**
@@ -171,7 +181,7 @@ export async function reasonAnalystPicks(
   blackboard: Blackboard,
   budget: RunBudget
 ): Promise<AnalystOutput> {
-  const { enriched, oddsOnlyMode, memoryContext } = context
+  const { enriched, oddsOnlyMode, memoryContext, teamLogos } = context
 
   if (!enriched.length) {
     return {
@@ -273,5 +283,13 @@ ${enriched.join('\n\n')}`
         p => p.trend_pct >= MIN_TREND_PCT && p.sample_size >= MIN_SAMPLE && p.odds >= MIN_ODDS && p.odds <= MAX_ODDS
       )
 
-  return { ...parsed, picks_retenus: validPicks, model_used }
+  // Logo attaché par lookup sur les données API-Football déjà collectées —
+  // jamais généré par le LLM, qui ne connaît aucune URL de logo réelle.
+  const picksWithLogos = validPicks.map(p => ({
+    ...p,
+    home_team_logo: teamLogos.get(p.home_team.trim().toLowerCase()) ?? null,
+    away_team_logo: teamLogos.get(p.away_team.trim().toLowerCase()) ?? null,
+  }))
+
+  return { ...parsed, picks_retenus: picksWithLogos, model_used }
 }

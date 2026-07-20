@@ -71,6 +71,11 @@ export interface PickCandidate {
   sample_size: number
   memory_context?: string
   news_context?: string
+  // Logos réels — disponibles uniquement quand l'Analyste a tourné avec de
+  // vraies données API-Football (jamais en mode cotes seules, ni inventés
+  // par le LLM). null/absent = repli sur drapeau ou initiales à l'affichage.
+  home_team_logo?: string | null
+  away_team_logo?: string | null
 }
 
 export interface RejectedPick {

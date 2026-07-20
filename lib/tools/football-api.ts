@@ -36,7 +36,7 @@ async function apiRequest<T>(path: string): Promise<T> {
 
 interface ApiFixtureStatus { short: string }
 interface ApiFixtureInfo { id: number; date: string; status: ApiFixtureStatus }
-interface ApiTeamInfo { id: number; name: string }
+interface ApiTeamInfo { id: number; name: string; logo: string }
 interface ApiTeams { home: ApiTeamInfo; away: ApiTeamInfo }
 interface ApiGoals { home: number | null; away: number | null }
 interface ApiLeague { name: string }
@@ -63,8 +63,8 @@ export interface TeamMatchResult {
 export interface TodayMatch {
   id: number
   competition: string
-  home_team: { id: number; name: string }
-  away_team: { id: number; name: string }
+  home_team: { id: number; name: string; logo: string }
+  away_team: { id: number; name: string; logo: string }
   datetime: string
 }
 
@@ -95,8 +95,8 @@ function mapFixtureToTodayMatch(entry: ApiFixtureEntry): TodayMatch {
   return {
     id: entry.fixture.id,
     competition: entry.league.name,
-    home_team: { id: entry.teams.home.id, name: entry.teams.home.name },
-    away_team: { id: entry.teams.away.id, name: entry.teams.away.name },
+    home_team: { id: entry.teams.home.id, name: entry.teams.home.name, logo: entry.teams.home.logo },
+    away_team: { id: entry.teams.away.id, name: entry.teams.away.name, logo: entry.teams.away.logo },
     datetime: entry.fixture.date,
   }
 }
