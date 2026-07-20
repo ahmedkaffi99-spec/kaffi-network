@@ -1,7 +1,7 @@
 const BASE_URL = 'https://api.the-odds-api.com/v4'
 const SPORT = 'soccer'
 
-interface OddsOutcome { name: string; price: number }
+interface OddsOutcome { name: string; price: number; point?: number }
 interface OddsMarket { key: string; outcomes: OddsOutcome[] }
 interface OddsBookmaker { key: string; title: string; markets: OddsMarket[] }
 interface OddsEvent {
@@ -57,13 +57,18 @@ export interface MatchOdds {
   h2h: { home: number | null; draw: number | null; away: number | null }
   totals: { over_2_5: number | null; under_2_5: number | null }
   btts: { yes: number | null; no: number | null }  // toujours null (btts non disponible en plan gratuit)
+  // Handicap — seule ligne représentative (celle du premier bookmaker qui en
+  // propose une), affichée à titre indicatif. La vérification multi-
+  // bookmaker d'un pick handicap précis se fait via getBookmakerQuotes(),
+  // qui filtre par valeur de point exacte, pas via ce champ.
+  spreads: { home_point: number | null; home_price: number | null; away_point: number | null; away_price: number | null }
 }
 
 export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
   const url = new URL(`${BASE_URL}/sports/${SPORT}/odds`)
   url.searchParams.set('apiKey', process.env.ODDS_API_KEY!)
   url.searchParams.set('regions', region)
-  url.searchParams.set('markets', 'h2h,totals')  // btts retiré : non supporté plan gratuit
+  url.searchParams.set('markets', 'h2h,totals,spreads')  // btts retiré : non supporté plan gratuit
   url.searchParams.set('oddsFormat', 'decimal')
   url.searchParams.set('dateFormat', 'iso')
 
@@ -80,12 +85,19 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
     const h2hOutcomes = allMarkets.filter(m => m.key === 'h2h').flatMap(m => m.outcomes)
     const totalsOutcomes = allMarkets.filter(m => m.key === 'totals').flatMap(m => m.outcomes)
     const bttsOutcomes = allMarkets.filter(m => m.key === 'btts').flatMap(m => m.outcomes)
+    const spreadsOutcomes = allMarkets.filter(m => m.key === 'spreads').flatMap(m => m.outcomes)
 
     const avgOdds = (outcomes: OddsOutcome[], name: string) => {
       const matching = outcomes.filter(o => o.name.toLowerCase().includes(name.toLowerCase()))
       if (!matching.length) return null
       return Math.round((matching.reduce((s, o) => s + o.price, 0) / matching.length) * 100) / 100
     }
+
+    // Ligne représentative (premier bookmaker qui en propose une) — juste
+    // pour informer l'Analyste qu'un handicap existe. La cote publiée vient
+    // toujours de la vérification multi-bookmaker du Sélecteur de cotes.
+    const homeSpread = spreadsOutcomes.find(o => o.name === event.home_team && o.point != null)
+    const awaySpread = spreadsOutcomes.find(o => o.name === event.away_team && o.point != null)
 
     return {
       sport_key: event.sport_key,
@@ -106,6 +118,12 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
         yes: avgOdds(bttsOutcomes, 'yes'),
         no: avgOdds(bttsOutcomes, 'no'),
       },
+      spreads: {
+        home_point: homeSpread?.point ?? null,
+        home_price: homeSpread?.price ?? null,
+        away_point: awaySpread?.point ?? null,
+        away_price: awaySpread?.price ?? null,
+      },
     }
   })
 }
@@ -123,7 +141,7 @@ async function fetchRawOddsEvents(region = 'eu'): Promise<OddsEvent[]> {
   const url = new URL(`${BASE_URL}/sports/${SPORT}/odds`)
   url.searchParams.set('apiKey', process.env.ODDS_API_KEY!)
   url.searchParams.set('regions', region)
-  url.searchParams.set('markets', 'h2h,totals')
+  url.searchParams.set('markets', 'h2h,totals,spreads')
   url.searchParams.set('oddsFormat', 'decimal')
   url.searchParams.set('dateFormat', 'iso')
 
@@ -191,23 +209,36 @@ function matchOutcome(
   betType: string,
   homeTeam: string,
   awayTeam: string
-): { marketKey: string; matches: (outcomeName: string) => boolean } | null {
+): { marketKey: string; matches: (outcome: OddsOutcome) => boolean } | null {
   const bt = betType.toLowerCase()
 
   if (bt.includes('plus de 2.5') || bt.includes('over 2.5')) {
-    return { marketKey: 'totals', matches: n => n.toLowerCase().includes('over') }
+    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('over') }
   }
   if (bt.includes('moins de 2.5') || bt.includes('under 2.5')) {
-    return { marketKey: 'totals', matches: n => n.toLowerCase().includes('under') }
+    return { marketKey: 'totals', matches: o => o.name.toLowerCase().includes('under') }
+  }
+  if (bt.includes('handicap')) {
+    // "Handicap Real Madrid -1.5" — la ligne (point) doit matcher EXACTEMENT
+    // celle du bookmaker (des lignes différentes ne sont pas comparables,
+    // même erreur qu'on veut éviter que sur totals) et l'équipe visée.
+    const pointMatch = betType.match(/[+-]?\d+(?:\.\d+)?/)
+    const point = pointMatch ? parseFloat(pointMatch[0]) : null
+    if (point == null) return null
+    const targetTeam = teamSimilarity(betType, homeTeam) >= teamSimilarity(betType, awayTeam) ? homeTeam : awayTeam
+    return {
+      marketKey: 'spreads',
+      matches: o => teamSimilarity(o.name, targetTeam) >= 0.3 && o.point != null && Math.abs(o.point - point) < 0.01,
+    }
   }
   if (bt.includes('victoire') && (bt.includes('domicile') || bt.includes('home'))) {
-    return { marketKey: 'h2h', matches: n => teamSimilarity(n, homeTeam) >= 0.3 }
+    return { marketKey: 'h2h', matches: o => teamSimilarity(o.name, homeTeam) >= 0.3 }
   }
   if (bt.includes('victoire') && (bt.includes('extérieur') || bt.includes('exterieur') || bt.includes('away'))) {
-    return { marketKey: 'h2h', matches: n => teamSimilarity(n, awayTeam) >= 0.3 }
+    return { marketKey: 'h2h', matches: o => teamSimilarity(o.name, awayTeam) >= 0.3 }
   }
   if (bt.includes('nul') || bt.includes('draw')) {
-    return { marketKey: 'h2h', matches: n => n.toLowerCase().includes('draw') }
+    return { marketKey: 'h2h', matches: o => o.name.toLowerCase().includes('draw') }
   }
 
   // BTTS et autres marchés non couverts par le plan gratuit The Odds API
@@ -233,7 +264,7 @@ export async function getBookmakerQuotes(homeTeam: string, awayTeam: string, bet
   const quotes: BookmakerQuote[] = []
   for (const bookmaker of event.bookmakers) {
     const market = bookmaker.markets.find(m => m.key === outcome.marketKey)
-    const outcomeEntry = market?.outcomes.find(o => outcome.matches(o.name))
+    const outcomeEntry = market?.outcomes.find(o => outcome.matches(o))
     if (outcomeEntry) quotes.push({ bookmaker: bookmaker.key, price: outcomeEntry.price })
   }
   return quotes

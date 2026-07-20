@@ -75,6 +75,13 @@ function oddsLines(matchOdds: MatchOdds): string[] {
   const { yes, no } = matchOdds.btts
   if (yes != null && yes >= MIN_ODDS && yes <= MAX_ODDS) lines.push(`BTTS Oui: ${yes.toFixed(2)}`)
   if (no != null && no >= MIN_ODDS && no <= MAX_ODDS) lines.push(`BTTS Non: ${no.toFixed(2)}`)
+  const { home_point, home_price, away_point, away_price } = matchOdds.spreads
+  if (home_point != null && home_price != null && home_price >= MIN_ODDS && home_price <= MAX_ODDS) {
+    lines.push(`Handicap ${matchOdds.home_team} ${home_point >= 0 ? '+' : ''}${home_point}: ${home_price.toFixed(2)}`)
+  }
+  if (away_point != null && away_price != null && away_price >= MIN_ODDS && away_price <= MAX_ODDS) {
+    lines.push(`Handicap ${matchOdds.away_team} ${away_point >= 0 ? '+' : ''}${away_point}: ${away_price.toFixed(2)}`)
+  }
   return lines
 }
 
@@ -282,11 +289,12 @@ SOURCES DE DONNÉES :
 - API-Football (champs Domicile/Extérieur avec %) : SEULE source pour les statistiques chiffrées.
 - Serper (champ Actualités) : contexte QUALITATIF uniquement — blessures, suspensions. Jamais de stat.
 
-TYPES DE PARI DISPONIBLES (avec cote réelle) : Victoire domicile, Victoire extérieur, Match nul, Plus de 2.5, Moins de 2.5 — choisis celui dont la tendance chiffrée est la plus solide pour CE match, pas toujours le même type par réflexe.
+TYPES DE PARI DISPONIBLES (avec cote réelle) : Victoire domicile, Victoire extérieur, Match nul, Plus de 2.5, Moins de 2.5, Handicap — choisis celui dont la tendance chiffrée est la plus solide pour CE match, pas toujours le même type par réflexe.
+- Handicap : reprends EXACTEMENT le libellé et la valeur de la ligne fournie dans les cotes disponibles (ex: "Handicap Real Madrid -1.5"), n'invente jamais une ligne absente des données. Justifie-le avec victoire_large (une équipe qui gagne souvent avec 2 buts d'écart ou plus est solide sur un handicap -1.5).
 TENDANCES DE CONTEXTE (jamais un type de pari en soi, mais renforcent ou affaiblissent ta confiance) : nul, cage_inviolee, victoire_large, forme récente (points/5, buts marqués/encaissés par match, série de victoires, invaincu sur 5) — utilise-les pour départager deux picks proches en tendance principale, jamais pour justifier un pick qui ne respecte pas la règle 1 ci-dessous.
 
 RÈGLES ABSOLUES :
-1. Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs (API-Football uniquement) — s'applique au type de pari choisi (ex: wins_ext pour "Victoire extérieur", nul pour "Match nul"), pas à une tendance de contexte
+1. Tendance ≥ ${MIN_TREND_PCT}% sur ≥ ${MIN_SAMPLE} matchs (API-Football uniquement) — s'applique au type de pari choisi (ex: wins_ext pour "Victoire extérieur", nul pour "Match nul", victoire_large pour "Handicap"), pas à une tendance de contexte
 2. Cote entre ${MIN_ODDS} et ${MAX_ODDS}
 3. Maximum ${MAX_PICKS} picks
 4. Blessure/suspension clé détectée = pick rejeté

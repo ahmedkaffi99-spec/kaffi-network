@@ -27,6 +27,8 @@ interface SessionWithPicks {
 
 function evaluateResult(
   betType: string,
+  homeTeam: string,
+  awayTeam: string,
   homeGoals: number,
   awayGoals: number
 ): 'win' | 'loss' | 'void' {
@@ -44,6 +46,19 @@ function evaluateResult(
     return homeGoals > 0 && awayGoals > 0 ? 'win' : 'loss'
   if (bt.includes('btts non'))
     return homeGoals === 0 || awayGoals === 0 ? 'win' : 'loss'
+
+  if (bt.includes('handicap')) {
+    const pointMatch = betType.match(/[+-]?\d+(?:\.\d+)?/)
+    if (!pointMatch) return 'void'
+    const point = parseFloat(pointMatch[0])
+    const isHomeTeam = bt.includes(homeTeam.toLowerCase())
+    const isAwayTeam = bt.includes(awayTeam.toLowerCase())
+    if (!isHomeTeam && !isAwayTeam) return 'void'
+    const adjusted = isHomeTeam ? homeGoals + point - awayGoals : awayGoals + point - homeGoals
+    if (adjusted > 0) return 'win'
+    if (adjusted < 0) return 'loss'
+    return 'void' // push — ligne entière (ex: -1, -2) tombant pile sur le score ajusté
+  }
 
   if (bt.includes('victoire') && bt.includes('domicile')) return homeGoals > awayGoals ? 'win' : 'loss'
   if (bt.includes('victoire') && bt.includes('extérieur')) return awayGoals > homeGoals ? 'win' : 'loss'
@@ -80,7 +95,7 @@ export async function checkPendingResults(): Promise<{ checked: number; updated:
     const score = await getMatchResult(pick.home_team, pick.away_team, matchDate)
     if (!score) continue
 
-    const result = evaluateResult(pick.bet_type, score.home, score.away)
+    const result = evaluateResult(pick.bet_type, pick.home_team, pick.away_team, score.home, score.away)
 
     await adminSupabase
       .from('picks')

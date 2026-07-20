@@ -20,6 +20,12 @@ export function shortenBetType(betType: string): string {
   if (bt.includes('victoire') && (bt.includes('extérieur') || bt.includes('exterieur') || bt.includes('away'))) return '2'
   if (bt.includes('match nul') || bt === 'nul' || bt.includes('draw')) return 'X'
 
+  const handicapMatch = betType.match(/handicap\s+(.+?)\s+([+-]?\d+(?:\.\d+)?)/i)
+  if (handicapMatch) {
+    const [, team, point] = handicapMatch
+    return `${team.trim()} ${point.startsWith('-') || point.startsWith('+') ? point : `+${point}`}`
+  }
+
   return betType
 }
 
