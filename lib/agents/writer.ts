@@ -63,7 +63,7 @@ ${picksText}
 Cote combinée : ${combo.combined_odds.toFixed(2)} (${combo.picks.length} matchs, cote moyenne par match ${avgPickOdds.toFixed(2)})
 
 Structure du post :
-1. Accroche sobre et confiante (1 ligne), mentionne le palier "${tierLabel}" avec un vocabulaire mesuré — le risque du palier se juge à la cote MOYENNE PAR MATCH (${avgPickOdds.toFixed(2)}), pas à la cote combinée (qui est grosse pour les 3 paliers vu le nombre de matchs) : prudent = cote par match basse/tendance forte ("sélection prudente"), audacieux = cote par match plus haute/plus incertaine ("sélection ambitieuse", jamais de sensationnalisme)
+1. Accroche sobre et confiante (1 ligne), mentionne le palier "${tierLabel}" avec un vocabulaire mesuré — le risque se lit à la fois au NOMBRE DE MATCHS (${combo.picks.length}) et à la cote moyenne par match (${avgPickOdds.toFixed(2)}) : prudent = peu de matchs, cote par match basse ("sélection prudente", conçue pour gagner plus souvent), audacieux = plus de matchs et/ou cote par match plus haute ("sélection ambitieuse", gain rare mais élevé quand ça passe, jamais de sensationnalisme)
 2. Chaque pick avec emoji numéroté (1️⃣ 2️⃣ etc.), match en gras au format "Équipe A VS Équipe B" (VS en majuscules entre les deux noms), type de pari dans la notation courte fournie ci-dessus (1/X/2, Over/Under, BTTS — reconnue par tous les parieurs, ne la reformule pas en phrase longue), cote, tendance courte
 3. Cote combinée mise en valeur, en rappelant que ${combo.picks.length} résultats doivent tous se réaliser
 4. CTA discret avec lien affilié : ${process.env.AFFILIATE_LINK ?? ''}

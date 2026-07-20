@@ -2,7 +2,7 @@ import { parseAgentJSON, callAgentModel, renderMission } from '@/lib/agent-kerne
 import type { Blackboard } from '@/lib/agent-kernel/blackboard'
 import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { TierCombo } from '@/lib/types'
-import { MIN_PICKS_PER_COMBO, MAX_PICKS_PER_COMBO } from './odds-selector'
+import { TIER_PICK_RANGE } from './odds-selector'
 
 const MISSION: AgentMission = {
   role: 'supervisor',
@@ -33,8 +33,9 @@ export interface SupervisorTierResult {
 function deterministicChecks(combo: TierCombo, writerOutput: string): string[] {
   const issues: string[] = []
 
-  if (combo.picks.length < MIN_PICKS_PER_COMBO || combo.picks.length > MAX_PICKS_PER_COMBO) {
-    issues.push(`Nombre de picks hors plage : ${combo.picks.length} (attendu ${MIN_PICKS_PER_COMBO}–${MAX_PICKS_PER_COMBO})`)
+  const { min, max } = TIER_PICK_RANGE[combo.tier]
+  if (combo.picks.length < min || combo.picks.length > max) {
+    issues.push(`Nombre de picks hors plage pour le palier ${combo.tier} : ${combo.picks.length} (attendu ${min}–${max})`)
   }
 
   const matchKeys = combo.picks.map(p => `${p.home_team}-${p.away_team}`)
@@ -81,7 +82,7 @@ VÉRIFICATIONS OBLIGATOIRES SUR LE POST REÇU :
 2. Cohérence entre le texte du post et les picks du combiné (aucun pick omis, ajouté ou déformé)
 3. Absence de contradictions (ex: over ET under sur le même match)
 4. Aucune promesse de gain déguisée qui contournerait l'esprit de l'interdiction "garanti/sûr à 100%/infaillible" même reformulée autrement
-5. Ton proportionné au risque : les 3 paliers ont tous une grosse cote combinée (8 à 15 matchs) — le risque réel se juge à la cote individuelle des picks (palier audacieux = cotes par match plus hautes, donc plus incertaines), le post doit le refléter sans minimiser
+5. Ton proportionné au risque : prudent (peu de picks, cotes basses) doit se lire comme la sélection la plus fiable, audacieux (plus de picks et/ou cotes plus hautes) comme la plus incertaine mais la plus payante — le post ne doit ni maquiller le risque d'audacieux, ni sous-vendre la fiabilité de prudent
 
 Sois STRICT : un doute = revision_needed.
 Réponds UNIQUEMENT avec du JSON valide.`

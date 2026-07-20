@@ -17,17 +17,26 @@ const MISSION: AgentMission = {
 }
 
 const MAX_BOOKMAKER_SPREAD = 0.20
-// Chaque combiné (coupon) contient entre MIN et MAX matchs — pas une plage
-// de cote. Les 3 paliers piochent dans le même pool de picks fiables mais
-// selon des critères de risque différents (cote par match, pas cote
-// combinée) : prudent = cotes les plus basses, audacieux = cotes les plus
-// hautes, équilibré = mélange des deux extrémités.
-// Minimum volontairement bas (2, un vrai combiné minimal) — le canal est
-// encore neuf, on privilégie la publication régulière à un volume élevé de
-// picks par combiné. À remonter (ex: 8) une fois plus de matchs/jour
-// disponibles (API-Football actif) pour des combinés plus étoffés.
-export const MIN_PICKS_PER_COMBO = 2
-export const MAX_PICKS_PER_COMBO = 15
+
+// Un combiné perd dès qu'UN pick perd — le NOMBRE de picks contrôle donc la
+// probabilité de gain final bien plus que la cote individuelle. Avec des
+// picks à ~85% de confiance chacun, un combiné de 15 picks ne gagne que
+// ~9% du temps (0.85^15) même si chaque pick est excellent individuellement
+// — incompatible avec un palier "prudent" censé gagner majoritairement.
+// Les 3 paliers sont donc différenciés par DEUX critères combinés :
+// - le nombre de picks (ce qui pilote la probabilité de gain du combiné)
+// - la cote individuelle de chaque pick (prudent = basse, audacieux = haute)
+// prudent  : peu de picks, cote basse par pick  → gagne la majorité du temps
+// équilibré: nombre intermédiaire, cotes mixtes → compromis
+// audacieux: plus de picks et/ou cotes hautes   → rare, mais gros gain
+export const TIER_PICK_RANGE: Record<Tier, { min: number; max: number }> = {
+  prudent: { min: 2, max: 4 },
+  equilibre: { min: 5, max: 8 },
+  audacieux: { min: 8, max: 15 },
+}
+// Minimum absolu pour tenter de construire ne serait-ce qu'un seul palier —
+// le plus bas des trois seuils ci-dessus (prudent).
+export const MIN_PICKS_PER_COMBO = TIER_PICK_RANGE.prudent.min
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
@@ -109,37 +118,43 @@ function buildCombo(tier: Tier, picks: ReliablePick[], reasonSuffix: string, dec
 }
 
 /**
- * ÉTAPE 2 — composition des 3 combinés. Chaque coupon contient entre 8 et
- * 15 matchs (pas une plage de cote) : les picks sont partagés entre paliers
- * (un même match peut entrer dans plusieurs coupons), et ce qui différencie
- * les paliers est le NIVEAU DE RISQUE des matchs choisis, pas la cote
- * combinée finale (qui sera de toute façon élevée pour les 3 avec 8-15
- * matchs) — prudent pioche les cotes individuelles les plus basses,
- * audacieux les plus hautes, équilibré un mélange des deux.
+ * ÉTAPE 2 — composition des 3 combinés. Chaque palier a sa propre plage de
+ * nombre de picks (TIER_PICK_RANGE) — pas la même pour les 3 — en plus de sa
+ * propre logique de cote : prudent pioche les cotes individuelles les plus
+ * basses (et le moins de picks, pour maximiser la probabilité de gain du
+ * combiné), audacieux les plus hautes (et le plus de picks, accepte un gain
+ * rare mais élevé), équilibré un mélange des deux à un volume intermédiaire.
  */
 function composeTiers(reliable: ReliablePick[]): { combos: Partial<Record<Tier, TierCombo>>; decisions: TierDecision[] } {
   const combos: Partial<Record<Tier, TierCombo>> = {}
   const decisions: TierDecision[] = []
 
-  if (reliable.length < MIN_PICKS_PER_COMBO) {
-    for (const tier of ['prudent', 'equilibre', 'audacieux'] as Tier[]) {
+  const byOddsAsc = [...reliable].sort((a, b) => a.odds - b.odds)
+  const byOddsDesc = [...byOddsAsc].reverse()
+
+  for (const tier of ['prudent', 'equilibre', 'audacieux'] as Tier[]) {
+    const { min, max } = TIER_PICK_RANGE[tier]
+
+    if (reliable.length < min) {
       decisions.push({
         match: '—',
         tier,
         included: false,
-        reason: `Seulement ${reliable.length} picks fiables — minimum ${MIN_PICKS_PER_COMBO} requis pour un coupon`,
+        reason: `Seulement ${reliable.length} picks fiables — minimum ${min} requis pour le palier ${tier}`,
       })
+      continue
     }
-    return { combos, decisions }
+
+    const count = Math.min(max, reliable.length)
+
+    if (tier === 'prudent') {
+      combos.prudent = buildCombo('prudent', byOddsAsc.slice(0, count), `${count} picks à cote individuelle basse — vise à gagner majoritairement`, decisions)
+    } else if (tier === 'audacieux') {
+      combos.audacieux = buildCombo('audacieux', byOddsDesc.slice(0, count), `${count} picks à cote individuelle haute — gain rare mais élevé`, decisions)
+    } else {
+      combos.equilibre = buildCombo('equilibre', interleaveFromBothEnds(byOddsAsc, count), `${count} picks — mélange de cotes basses et hautes`, decisions)
+    }
   }
-
-  const byOddsAsc = [...reliable].sort((a, b) => a.odds - b.odds)
-  const byOddsDesc = [...byOddsAsc].reverse()
-  const count = Math.min(MAX_PICKS_PER_COMBO, reliable.length)
-
-  combos.prudent = buildCombo('prudent', byOddsAsc.slice(0, count), 'cote individuelle parmi les plus basses du pool', decisions)
-  combos.audacieux = buildCombo('audacieux', byOddsDesc.slice(0, count), 'cote individuelle parmi les plus hautes du pool', decisions)
-  combos.equilibre = buildCombo('equilibre', interleaveFromBothEnds(byOddsAsc, count), 'mélange de cotes basses et hautes du pool', decisions)
 
   return { combos, decisions }
 }
@@ -166,7 +181,7 @@ export async function decide(candidates: PickCandidate[], blackboard: Blackboard
       type: 'decision',
       content: combo
         ? `Palier ${tier} : ${combo.picks.length} picks, cote combinée ${combo.combined_odds}.`
-        : `Palier ${tier} non généré aujourd'hui — moins de ${MIN_PICKS_PER_COMBO} picks fiables disponibles.`,
+        : `Palier ${tier} non généré aujourd'hui — moins de ${TIER_PICK_RANGE[tier].min} picks fiables disponibles.`,
     })
   }
 
