@@ -277,7 +277,7 @@ export async function generateTicketImage(
                     },
                     children: [
                       { type: 'span', props: { style: { color: '#526082', fontSize: '10px' }, children: 'Pari responsable — aucun gain garanti' } },
-                      { type: 'span', props: { style: { color: '#8a97b5', fontSize: '10px', fontWeight: 600, letterSpacing: '0.5px' }, children: 't.me/kaffinetwork' } },
+                      { type: 'span', props: { style: { color: '#8a97b5', fontSize: '10px', fontWeight: 600, letterSpacing: '0.5px' }, children: 't.me/IAdePronosticsCoupons' } },
                     ],
                   },
                 },

@@ -74,7 +74,7 @@ export function Sidebar() {
           <span className="text-xl">✈️</span>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium text-gray-300">Canal Telegram</div>
-            <div className="text-xs text-gray-600 truncate">@kaffi_network</div>
+            <div className="text-xs text-gray-600 truncate">@IAdePronosticsCoupons</div>
           </div>
           <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" title="En ligne" />
         </div>
