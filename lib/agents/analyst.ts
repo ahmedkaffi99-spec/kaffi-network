@@ -116,13 +116,17 @@ export async function gatherAnalystContext(
   plannerOutput: PlannerOutput,
   blackboard: Blackboard
 ): Promise<AnalystContext> {
-  const [odds, memoryContext] = await Promise.all([getTodayOdds(), loadMediumTermDigest()])
+  // plannerOutput.date est la date ciblée par ce run (par défaut aujourd'hui,
+  // mais peut être une date future explicitement demandée) — sans la
+  // transmettre ici, l'API-Football et l'API de cotes ignoraient cette
+  // date et regarderaient toujours "maintenant" au moment de l'appel.
+  const [odds, memoryContext] = await Promise.all([getTodayOdds('eu', plannerOutput.date), loadMediumTermDigest()])
 
   let analysisData: MatchAnalysisData[] = []
   let oddsOnlyMode = false
 
   try {
-    const matches: TodayMatch[] = await getTodayMatches()
+    const matches: TodayMatch[] = await getTodayMatches(plannerOutput.date)
     if (matches.length > 0) {
       analysisData = await buildMatchAnalysisData(matches)
     }

@@ -67,13 +67,27 @@ export interface MatchOdds {
   spreads: { home_point: number | null; home_price: number | null; away_point: number | null; away_price: number | null }
 }
 
-export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
+// Fenêtre 00h-00h (UTC) pour une date donnée — sans ça, l'API renvoie tout
+// ce qui est "upcoming" à l'instant de l'appel, pas les matchs d'une
+// journée précise.
+function dayWindowUtc(date: string): { from: string; to: string } {
+  const from = `${date}T00:00:00Z`
+  const to = new Date(new Date(`${date}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000).toISOString()
+  return { from, to }
+}
+
+export async function getTodayOdds(region = 'eu', date?: string): Promise<MatchOdds[]> {
   const url = new URL(`${BASE_URL}/sports/${SPORT}/odds`)
   url.searchParams.set('apiKey', process.env.ODDS_API_KEY!)
   url.searchParams.set('regions', region)
   url.searchParams.set('markets', 'h2h,totals,spreads')  // btts retiré : non supporté plan gratuit
   url.searchParams.set('oddsFormat', 'decimal')
   url.searchParams.set('dateFormat', 'iso')
+  if (date) {
+    const { from, to } = dayWindowUtc(date)
+    url.searchParams.set('commenceTimeFrom', from)
+    url.searchParams.set('commenceTimeTo', to)
+  }
 
   const res = await fetch(url.toString(), { cache: 'no-store' })
   if (!res.ok) {

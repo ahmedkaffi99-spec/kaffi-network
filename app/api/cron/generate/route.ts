@@ -9,6 +9,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const result = await runPipeline()
+  // ?date=YYYY-MM-DD optionnel — permet de cibler une journée précise
+  // (ex: tester le calendrier de demain) au lieu de toujours "aujourd'hui".
+  const date = req.nextUrl.searchParams.get('date') ?? undefined
+  const result = await runPipeline(date)
   return NextResponse.json(result, { status: result.success ? 200 : 422 })
 }

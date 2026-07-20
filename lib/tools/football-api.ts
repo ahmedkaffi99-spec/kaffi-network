@@ -120,9 +120,9 @@ function mapFixtureToTeamMatchResult(entry: ApiFixtureEntry, teamId: number): Te
 
 // ─── Fonctions exportées ──────────────────────────────────────────────────────
 
-export async function getTodayMatches(): Promise<TodayMatch[]> {
-  const today = new Date().toISOString().split('T')[0]
-  const data = await trackRequest<ApiFixturesResponse>(`/fixtures?date=${today}`, 1)
+export async function getTodayMatches(date?: string): Promise<TodayMatch[]> {
+  const targetDate = date ?? new Date().toISOString().split('T')[0]
+  const data = await trackRequest<ApiFixturesResponse>(`/fixtures?date=${targetDate}`, 1)
 
   return data.response
     .filter(entry => ACTIVE_STATUSES.includes(entry.fixture.status.short))
