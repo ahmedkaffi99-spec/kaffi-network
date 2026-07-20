@@ -25,6 +25,13 @@ const MISSION: AgentMission = {
 export async function runPlanner(date: string, blackboard: Blackboard, budget: RunBudget): Promise<PlannerOutput> {
   const dayName = new Date(date).toLocaleDateString('fr-FR', { weekday: 'long' })
   const dateLabel = new Date(date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+  // Heure RÉELLE d'exécution du run — distincte de `date` (la journée
+  // ciblée par l'analyse, qui peut être future). Sans ça, le modèle ne sait
+  // pas si on tourne à 4h du matin (quasi aucun match encore commencé) ou
+  // en soirée (créneau européen classique) — ça change ce qu'il doit
+  // raisonnablement attendre comme volume de matchs disponibles.
+  const now = new Date()
+  const nowLabel = now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short', timeZone: 'UTC' })
 
   // Découverte web AVANT toute planification — on ancre le plan sur les
   // matchs dont on parle réellement aujourd'hui plutôt que sur la seule
@@ -45,7 +52,8 @@ export async function runPlanner(date: string, blackboard: Blackboard, budget: R
 Tu analyses le calendrier football du jour et produis un plan JSON structuré.
 Réponds UNIQUEMENT avec du JSON valide, sans markdown ni commentaire.`
 
-  const userMessage = `Date : ${date} (${dayName})
+  const userMessage = `Date ciblée par cette analyse : ${date} (${dayName})
+Heure réelle d'exécution de ce run : ${nowLabel} (UTC) — sers-t'en pour juger si la journée ciblée est déjà bien avancée (peu de matchs encore à venir) ou encore à venir, pas pour changer la date ciblée elle-même.
 Compétitions disponibles : ${COMPETITIONS.join(', ')}
 
 Résultats de recherche web sur les matchs/pronostics du jour (${trendingResults.length} résultats) :
@@ -63,12 +71,15 @@ Génère un plan JSON avec la structure suivante :
 
   const { text, model_used } = await callAgentModel('planner', system, userMessage, 768, blackboard, budget)
 
+  // Signalé explicitement comme un repli — sans ça, un échec de parsing du
+  // modèle produisait un plan générique indiscernable d'un vrai raisonnement
+  // daté (ex: "Analyse standard du jour" identique quelle que soit la date).
   const fallback: PlannerOutput = {
     date,
     competitions: ['Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1'],
     focus_areas: ['over 2.5', 'btts oui', 'victoire domicile'],
     trending_matches: [],
-    context: 'Analyse standard du jour.',
+    context: `Plan de secours pour le ${dateLabel} — réponse du modèle illisible, repli sur les grands championnats par défaut.`,
     model_used,
   }
   const parsed = parseAgentJSON<PlannerOutput>(text, fallback)
