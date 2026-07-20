@@ -65,7 +65,7 @@ export default function LoginPage() {
                 required
                 autoComplete="email"
                 className="w-full px-4 py-3 bg-navy-900 border border-navy-700 rounded-xl text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-gold-500/40 focus:border-gold-500/50 transition"
-                placeholder="admin@kaffi-network.com"
+                placeholder="admin@exemple.com"
               />
             </div>
 
@@ -102,7 +102,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-gray-700 mt-6">
-          Accès réservé · Kaffi Network © {new Date().getFullYear()}
+          Accès réservé · IA de Pronostics & Coupons © {new Date().getFullYear()}
         </p>
       </div>
     </div>

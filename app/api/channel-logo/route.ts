@@ -71,7 +71,7 @@ export async function GET() {
                 zIndex: 1,
               },
               children: [
-                // Marque "K" — Satori ne rend pas les glyphes emoji correctement
+                // Marque "IA" — Satori ne rend pas les glyphes emoji correctement
                 {
                   type: 'div',
                   props: {
@@ -83,26 +83,26 @@ export async function GET() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '72px',
+                      fontSize: '58px',
                       fontWeight: 700,
                       color: '#060d1f',
                       marginBottom: '16px',
                     },
-                    children: 'K',
+                    children: 'IA',
                   },
                 },
-                // KAFFI
+                // PRONOSTICS
                 {
                   type: 'div',
                   props: {
                     style: {
                       color: '#c9a35c',
-                      fontSize: '72px',
+                      fontSize: '52px',
                       fontWeight: 700,
-                      letterSpacing: '10px',
+                      letterSpacing: '6px',
                       lineHeight: '1',
                     },
-                    children: 'KAFFI',
+                    children: 'PRONOSTICS',
                   },
                 },
                 // Séparateur doré
@@ -117,7 +117,7 @@ export async function GET() {
                     },
                   },
                 },
-                // NETWORK
+                // & COUPONS
                 {
                   type: 'div',
                   props: {
@@ -125,10 +125,10 @@ export async function GET() {
                       color: '#ffffff',
                       fontSize: '28px',
                       fontWeight: 300,
-                      letterSpacing: '14px',
+                      letterSpacing: '10px',
                       lineHeight: '1',
                     },
-                    children: 'NETWORK',
+                    children: '& COUPONS',
                   },
                 },
                 // Tagline
@@ -142,7 +142,7 @@ export async function GET() {
                       marginTop: '16px',
                       fontWeight: 400,
                     },
-                    children: 'PRONOSTICS IA',
+                    children: 'PARIS FOOTBALL',
                   },
                 },
               ],
@@ -163,7 +163,7 @@ export async function GET() {
   return new NextResponse(png, {
     headers: {
       'Content-Type': 'image/png',
-      'Content-Disposition': 'attachment; filename="kaffi-network-logo.png"',
+      'Content-Disposition': 'attachment; filename="ia-pronostics-coupons-logo.png"',
     },
   })
 }

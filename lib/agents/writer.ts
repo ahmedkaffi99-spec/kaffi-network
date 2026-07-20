@@ -38,7 +38,7 @@ export async function runWriter(
 
   const system = `${renderMission(MISSION)}
 
-Kaffi Network est une chaîne Telegram de pronostics football PREMIUM — le
+IA de Pronostics & Coupons est une chaîne Telegram de pronostics football PREMIUM — le
 ton doit être celui d'une marque haut de gamme, pas d'un groupe de paris
 entre potes.
 

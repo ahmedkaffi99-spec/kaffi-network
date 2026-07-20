@@ -7,8 +7,8 @@ const fraunces = Fraunces({ subsets: ['latin'], variable: '--font-fraunces', dis
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' })
 
 export const metadata: Metadata = {
-  title: 'Kaffi Network | Dashboard',
-  description: 'Panneau de gestion des pronostics Kaffi Network',
+  title: 'IA de Pronostics & Coupons | Dashboard',
+  description: 'Panneau de gestion des pronostics IA de Pronostics & Coupons',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

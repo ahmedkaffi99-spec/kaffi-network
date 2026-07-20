@@ -88,7 +88,7 @@ export function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-white">Admin</div>
-            <div className="text-xs text-gray-600 truncate">Kaffi Network</div>
+            <div className="text-xs text-gray-600 truncate">IA de Pronostics & Coupons</div>
           </div>
         </div>
         <button

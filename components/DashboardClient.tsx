@@ -58,7 +58,7 @@ export function DashboardClient({ todaySessions, stats }: Props) {
     <div>
       <Header
         title="Vue d'ensemble"
-        subtitle="Pipeline de pronostics · Kaffi Network"
+        subtitle="Pipeline de pronostics · IA de Pronostics & Coupons"
         actions={
           <Button
             variant="primary"

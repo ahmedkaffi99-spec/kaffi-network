@@ -6,7 +6,7 @@ const openrouter = createOpenAI({
   apiKey: process.env.OPENROUTER_API_KEY!,
   headers: {
     'HTTP-Referer': 'https://kaffi-network.vercel.app',
-    'X-Title': 'Kaffi Network',
+    'X-Title': 'IA de Pronostics & Coupons',
   },
 })
 

@@ -29,7 +29,7 @@ export async function GET() {
     const caption = [
       '🧪 <b>EXEMPLE — pas un vrai pronostic</b>',
       '',
-      '🎫 <b>Aperçu du format Combiné Kaffi Network</b>',
+      '🎫 <b>Aperçu du format Combiné — IA de Pronostics & Coupons</b>',
       '',
       ...FAKE_PICKS.map((p, i) => `${i + 1}. <b>${p.home_team} VS ${p.away_team}</b> → ${shortenBetType(p.bet_type)} (cote ${p.odds.toFixed(2)})\n   💡 <i>${p.trend_label}</i>`),
       '',

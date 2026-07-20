@@ -166,11 +166,11 @@ export async function generateTicketImage(
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  fontSize: '18px',
+                                  fontSize: '15px',
                                   fontWeight: 700,
                                   color: '#0a1428',
                                 },
-                                children: 'K',
+                                children: 'IA',
                               },
                             },
                             {
@@ -178,7 +178,7 @@ export async function generateTicketImage(
                               props: {
                                 style: { display: 'flex', flexDirection: 'column' },
                                 children: [
-                                  { type: 'span', props: { style: { color: '#e8cf9e', fontSize: '17px', fontWeight: 700, letterSpacing: '2.5px' }, children: 'KAFFI NETWORK' } },
+                                  { type: 'span', props: { style: { color: '#e8cf9e', fontSize: '15px', fontWeight: 700, letterSpacing: '1.5px' }, children: 'PRONOSTICS IA' } },
                                   { type: 'span', props: { style: { color: '#5b6b8c', fontSize: '11px', marginTop: '2px' }, children: formattedDate } },
                                 ],
                               },
