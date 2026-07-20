@@ -26,20 +26,15 @@ const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
 // Liste volontairement resserrée à 5 modèles confirmés (retiré : Hermes 3,
 // Qwen3 235B, Qwen3 Next 80B, Gemma 4, Llama 3.3/3.2 — sur demande, pour ne
 // garder que les modèles explicitement choisis).
-// Analyst + Supervisor : Nemotron 3 Ultra 550B (rigueur max)
-// Planner             : Nemotron 3 Super 120B (léger, rapide)
-// Writer              : Tencent Hy3 (262K ctx)
+// Analyst   : Nemotron 3 Ultra 550B (rigueur max)
+// Planner   : Nemotron 3 Super 120B (léger, rapide)
+// Writer    : Tencent Hy3 (262K ctx)
+// (Le rôle Superviseur n'appelle plus de modèle — remplacé par la
+// validation manuelle de l'utilisateur, voir lib/agents/supervisor.ts.)
 // poolside/laguna-xs-2.1:free et cohere/north-mini-code:free — modèles
 // "coding agent" (33B-A3B / 30B MoE), gros contexte (256K/262K), en secours
-// sur les 4 rôles. Slugs vérifiés directement sur la page modèle OpenRouter.
+// sur les rôles restants. Slugs vérifiés directement sur la page modèle OpenRouter.
 const ANALYST_MODELS = [
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'poolside/laguna-xs-2.1:free',
-  'cohere/north-mini-code:free',
-]
-
-const SUPERVISOR_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nvidia/nemotron-3-ultra-550b-a55b:free',
   'poolside/laguna-xs-2.1:free',
@@ -60,7 +55,7 @@ const WRITER_MODELS = [
   'cohere/north-mini-code:free',
 ]
 
-export type AgentRole = 'planner' | 'analyst' | 'writer' | 'supervisor'
+export type AgentRole = 'planner' | 'analyst' | 'writer'
 
 interface RouterResult {
   text: string
@@ -113,7 +108,6 @@ export async function routeCompletion(
   const models =
     role === 'planner' ? PLANNER_MODELS :
     role === 'writer' ? WRITER_MODELS :
-    role === 'supervisor' ? SUPERVISOR_MODELS :
     ANALYST_MODELS
 
   console.log(`[model-router] 🚀 role=${role} — essai de ${models.length} modèles OpenRouter`)

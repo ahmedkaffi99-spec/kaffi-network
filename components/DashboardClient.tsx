@@ -45,6 +45,15 @@ export function DashboardClient({ todaySessions, stats }: Props) {
     router.refresh()
   }
 
+  async function handleReject(id: string) {
+    const res = await fetch(`/api/sessions/${id}/reject`, { method: 'POST' })
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error)
+    }
+    router.refresh()
+  }
+
   async function handlePublish(id: string, file: File) {
     const formData = new FormData()
     formData.append('file', file)
@@ -113,7 +122,7 @@ export function DashboardClient({ todaySessions, stats }: Props) {
           {todaySessions.length ? (
             <div className="space-y-4">
               {todaySessions.map(session => (
-                <SessionCard key={session.id} session={session} onApprove={handleApprove} onPublish={handlePublish} />
+                <SessionCard key={session.id} session={session} onApprove={handleApprove} onReject={handleReject} onPublish={handlePublish} />
               ))}
             </div>
           ) : (

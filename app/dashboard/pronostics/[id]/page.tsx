@@ -95,7 +95,7 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
           )}
           {session.iterations > 0 && (
             <span className="px-3 py-1 text-xs rounded-full border border-navy-600/50 bg-navy-800/40 text-gray-400">
-              {session.iterations} itération{session.iterations > 1 ? 's' : ''} superviseur
+              {session.iterations} itération{session.iterations > 1 ? 's' : ''} de rédaction
             </span>
           )}
         </div>
@@ -217,7 +217,7 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
         {session.supervisor_notes && (
           <Card>
             <CardHeader>
-              <h2 className="font-semibold text-white text-sm">Notes superviseur</h2>
+              <h2 className="font-semibold text-white text-sm">Contrôles automatiques</h2>
             </CardHeader>
             <CardBody className="space-y-2">
               {session.supervisor_notes.checks.map((check, i) => (

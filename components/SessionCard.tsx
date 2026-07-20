@@ -45,10 +45,11 @@ const COMPETITION_ICONS: Record<string, string> = {
 interface SessionCardProps {
   session: PronosticSession
   onApprove?: (id: string) => Promise<void>
+  onReject?: (id: string) => Promise<void>
   onPublish?: (id: string, file: File) => Promise<void>
 }
 
-export function SessionCard({ session, onApprove, onPublish }: SessionCardProps) {
+export function SessionCard({ session, onApprove, onReject, onPublish }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
   const [ticketFile, setTicketFile] = useState<File | null>(null)
@@ -64,6 +65,16 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
     setLoading('approve')
     try {
       await onApprove?.(session.id)
+      router.refresh()
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function handleReject() {
+    setLoading('reject')
+    try {
+      await onReject?.(session.id)
       router.refresh()
     } finally {
       setLoading(null)
@@ -143,6 +154,16 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
             {pendingCount > 0 && (
               <span className="text-sm text-gray-500">{pendingCount} en attente</span>
             )}
+          </div>
+        )}
+
+        {/* Post rédigé — à lire avant d'approuver (le Superviseur, c'est toi) */}
+        {session.status === 'draft' && session.writer_output && (
+          <div className="mb-4">
+            <div className="text-xs text-gray-500 mb-1.5">Post Telegram rédigé — à valider :</div>
+            <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap leading-relaxed bg-navy-900/60 border border-navy-700/40 rounded-xl p-3 max-h-64 overflow-y-auto">
+              {session.writer_output}
+            </pre>
           </div>
         )}
 
@@ -228,9 +249,14 @@ export function SessionCard({ session, onApprove, onPublish }: SessionCardProps)
           {session.status !== 'published' && session.status !== 'approved' && <div />}
 
           {session.status === 'draft' && (
-            <Button size="sm" variant="success" disabled={loading === 'approve'} onClick={handleApprove}>
-              {loading === 'approve' ? '...' : '✓ Approuver'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="danger" disabled={loading === 'reject'} onClick={handleReject}>
+                {loading === 'reject' ? '...' : '✗ Rejeter'}
+              </Button>
+              <Button size="sm" variant="success" disabled={loading === 'approve'} onClick={handleApprove}>
+                {loading === 'approve' ? '...' : '✓ Approuver'}
+              </Button>
+            </div>
           )}
 
           {session.status === 'approved' && (

@@ -40,6 +40,12 @@ export function PronosticsClient({ sessions }: Props) {
     router.refresh()
   }
 
+  async function handleReject(id: string) {
+    const res = await fetch(`/api/sessions/${id}/reject`, { method: 'POST' })
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error) }
+    router.refresh()
+  }
+
   async function handlePublish(id: string, file: File) {
     const formData = new FormData()
     formData.append('file', file)
@@ -80,7 +86,7 @@ export function PronosticsClient({ sessions }: Props) {
         ) : (
           <div className="space-y-4">
             {filtered.map(session => (
-              <SessionCard key={session.id} session={session} onApprove={handleApprove} onPublish={handlePublish} />
+              <SessionCard key={session.id} session={session} onApprove={handleApprove} onReject={handleReject} onPublish={handlePublish} />
             ))}
           </div>
         )}
