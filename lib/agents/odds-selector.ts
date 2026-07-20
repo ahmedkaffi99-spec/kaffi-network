@@ -4,6 +4,9 @@ import type { AgentMission } from '@/lib/agent-kernel/types'
 import type { PickCandidate, Tier, ReliablePick, ExcludedPick, TierCombo, TierDecision, OddsSelectorOutput } from '@/lib/types'
 import { getBookmakerQuotes, PRIORITY_BOOKMAKER_KEY } from '@/lib/tools/odds-api'
 
+// Appelé en interne par lib/agents/analyst.ts:runAnalystAndOdds — un seul
+// appel visible depuis l'orchestrateur pour Analyste + Sélecteur de cotes,
+// mais ce module reste séparé et 100% déterministe (aucun appel modèle).
 const MISSION: AgentMission = {
   role: 'odds-selector',
   label: 'le Sélecteur de cotes',
@@ -12,7 +15,7 @@ const MISSION: AgentMission = {
   doesNot: [
     "Ne sélectionne aucun nouveau match et ne calcule aucune tendance statistique — délégué à l'Analyste.",
     'Ne rédige pas le post Telegram — délégué au Rédacteur.',
-    'Ne valide pas la qualité finale avant publication — délégué au Superviseur.',
+    "Ne valide pas la qualité finale avant publication — cette décision revient à l'utilisateur depuis le dashboard.",
   ],
 }
 

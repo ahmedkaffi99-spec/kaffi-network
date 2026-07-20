@@ -1,10 +1,11 @@
 import { parseAgentJSON, callAgentModel, renderMission, loadMediumTermDigest } from '@/lib/agent-kernel'
 import type { Blackboard } from '@/lib/agent-kernel/blackboard'
 import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
-import type { PlannerOutput, AnalystOutput } from '@/lib/types'
+import type { PlannerOutput, AnalystOutput, OddsSelectorOutput } from '@/lib/types'
 import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type MatchAnalysisData, type TeamMatchResult } from '@/lib/tools/football-api'
 import { getTodayOdds, findMatchOdds, isKnownLeague, type MatchOdds } from '@/lib/tools/odds-api'
 import { checkTeamNews } from '@/lib/tools/serper'
+import { decide as decideOdds } from './odds-selector'
 
 const MIN_TREND_PCT = 80
 const MIN_SAMPLE = 8
@@ -20,10 +21,10 @@ const MISSION: AgentMission = {
   role: 'analyst',
   label: "l'Analyste",
   responsibility:
-    'sélectionner les picks football à haute valeur statistique à partir des données fournies (API-Football, cotes, actualités), en respectant strictement les seuils de tendance et de cote.',
+    "sélectionner les picks football à haute valeur statistique à partir des données fournies (API-Football, cotes, actualités), en respectant strictement les seuils de tendance et de cote. Délègue ensuite en interne au Sélecteur de cotes (déterministe, sans LLM) la vérification des cotes bookmaker et la composition des 3 combinés — un seul appel depuis l'orchestrateur pour les deux étapes.",
   doesNot: [
     'Ne planifie pas les compétitions/focus du jour — délégué au Planner.',
-    'Ne valide pas la qualité finale du combiné — délégué au Superviseur.',
+    'Ne valide pas la qualité finale du combiné — cette décision revient à l\'utilisateur depuis le dashboard.',
     "Ne rédige pas le post Telegram — délégué au Writer.",
     "N'invente jamais une statistique non présente dans les données fournies.",
   ],
@@ -357,4 +358,35 @@ ${enriched.join('\n\n')}`
   }))
 
   return { ...parsed, picks_retenus: picksWithLogos, model_used }
+}
+
+/**
+ * Point d'entrée unique pour l'orchestrateur — fusionne Analyste (perception
+ * + raisonnement LLM) et Sélecteur de cotes (vérification bookmaker +
+ * composition des combinés, déterministe) en une seule étape de pipeline.
+ * Le Sélecteur de cotes reste un module séparé en interne (odds-selector.ts)
+ * et reste 100% déterministe — cette fusion ne touche à aucune logique,
+ * elle réduit seulement le nombre d'étapes visibles dans le pipeline.
+ */
+export async function runAnalystAndOdds(
+  plannerOutput: PlannerOutput,
+  blackboard: Blackboard,
+  budget: RunBudget
+): Promise<{ analystOutput: AnalystOutput; oddsSelectorOutput: OddsSelectorOutput | null }> {
+  const context = await gatherAnalystContext(plannerOutput, blackboard)
+  const analystOutput = await reasonAnalystPicks(plannerOutput, context, undefined, blackboard, budget)
+
+  blackboard.post({
+    from: 'analyst',
+    to: 'odds-selector',
+    type: 'decision',
+    content: `${analystOutput.picks_retenus.length} picks candidats — ${analystOutput.summary}`,
+  })
+
+  if (!analystOutput.picks_retenus.length) {
+    return { analystOutput, oddsSelectorOutput: null }
+  }
+
+  const oddsSelectorOutput = await decideOdds(analystOutput.picks_retenus, blackboard)
+  return { analystOutput, oddsSelectorOutput }
 }

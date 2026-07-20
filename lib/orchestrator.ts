@@ -1,7 +1,6 @@
 import { adminSupabase } from '@/lib/supabase/admin'
 import { runPlanner } from '@/lib/agents/planner'
-import { gatherAnalystContext, reasonAnalystPicks } from '@/lib/agents/analyst'
-import { decide as decideOdds } from '@/lib/agents/odds-selector'
+import { runAnalystAndOdds } from '@/lib/agents/analyst'
 import { runWriter } from '@/lib/agents/writer'
 import { checkTierStructure, type SupervisorTierResult } from '@/lib/agents/supervisor'
 import { checkDuplicates } from '@/lib/tools/duplicate-checker'
@@ -194,24 +193,15 @@ export async function runPipeline(date?: string): Promise<OrchestratorResult> {
     // ── Planner ───────────────────────────────────────────────────────────
     const plannerOutput = await runPlanner(targetDate, blackboard, budget)
 
-    // ── Analyst : perception une fois, raisonnement une fois — produit des
-    //    CANDIDATS, la décision finale revient au Sélecteur de cotes ───────
-    const analystContext = await gatherAnalystContext(plannerOutput, blackboard)
-    const analystOutput = await reasonAnalystPicks(plannerOutput, analystContext, undefined, blackboard, budget)
-    blackboard.post({
-      from: 'analyst',
-      to: 'odds-selector',
-      type: 'decision',
-      content: `${analystOutput.picks_retenus.length} picks candidats — ${analystOutput.summary}`,
-    })
+    // ── Analyste (perception + raisonnement LLM, produit des CANDIDATS) et
+    //    Sélecteur de cotes (cotes fiables + composition des 3 combinés,
+    //    déterministe) — fusionnés en un seul appel depuis l'orchestrateur,
+    //    voir lib/agents/analyst.ts:runAnalystAndOdds ─────────────────────
+    const { analystOutput, oddsSelectorOutput } = await runAnalystAndOdds(plannerOutput, blackboard, budget)
 
-    if (!analystOutput.picks_retenus.length) {
+    if (!analystOutput.picks_retenus.length || !oddsSelectorOutput) {
       return { success: false, message: 'Aucun pick candidat retenu par l\'analyste.', tiers: [] }
     }
-
-    // ── Sélecteur de cotes : décision finale — cotes fiables + composition
-    //    des 3 combinés (picks partagés entre paliers) ──────────────────────
-    const oddsSelectorOutput = await decideOdds(analystOutput.picks_retenus, blackboard)
 
     const builtTiers = ALL_TIERS.map(t => oddsSelectorOutput.combos[t]).filter((c): c is TierCombo => !!c)
 
