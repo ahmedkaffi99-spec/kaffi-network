@@ -72,7 +72,10 @@ export interface MatchOdds {
 // journée précise.
 function dayWindowUtc(date: string): { from: string; to: string } {
   const from = `${date}T00:00:00Z`
-  const to = new Date(new Date(`${date}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000).toISOString()
+  // La doc de The Odds API attend "2023-09-09T00:00:00Z" — sans les
+  // millisecondes que .toISOString() ajoute par défaut (".000Z"), ce que
+  // l'API rejette avec un 422 (vérifié en conditions réelles).
+  const to = new Date(new Date(from).getTime() + 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   return { from, to }
 }
 
