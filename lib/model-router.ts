@@ -10,6 +10,19 @@ const openrouter = createOpenAI({
   },
 })
 
+// Fournisseur de secours séparé (clé API distincte, pas via OpenRouter) —
+// GROQ_API_KEY absente de l'environnement = ce niveau est simplement ignoré,
+// aucun crash. À configurer sur Vercel (Production + Preview) pour l'activer.
+const groq = process.env.GROQ_API_KEY
+  ? createOpenAI({ baseURL: 'https://api.groq.com/openai/v1', apiKey: process.env.GROQ_API_KEY })
+  : null
+
+// IDs Groq (pas de préfixe fournisseur, contrairement à OpenRouter) — noms
+// stables au moment de l'écriture, à revérifier sur console.groq.com si
+// l'un d'eux échoue systématiquement (le routeur passe alors juste au
+// suivant, jamais bloquant).
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
+
 // Modèles exacts demandés + fallbacks vérifiés via OpenRouter API
 // Analyst + Supervisor : Nemotron 3 Ultra 550B (rigueur max)
 // Planner             : Nemotron 3 Super 120B (léger, rapide)
@@ -70,6 +83,7 @@ interface RouterResult {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 async function tryModel(
+  client: typeof openrouter,
   model: string,
   system: string,
   userMessage: string,
@@ -79,7 +93,7 @@ async function tryModel(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const { text } = await generateText({
-        model: openrouter(model),
+        model: client(model),
         system,
         prompt: userMessage,
         maxOutputTokens: maxTokens,
@@ -115,11 +129,21 @@ export async function routeCompletion(
     role === 'supervisor' ? SUPERVISOR_MODELS :
     ANALYST_MODELS
 
-  console.log(`[model-router] 🚀 role=${role} — essai de ${models.length} modèles`)
+  console.log(`[model-router] 🚀 role=${role} — essai de ${models.length} modèles OpenRouter`)
 
   for (const model of models) {
-    const text = await tryModel(model, system, userMessage, maxTokens)
+    const text = await tryModel(openrouter, model, system, userMessage, maxTokens)
     if (text) return { text, model_used: model }
+  }
+
+  // Dernier niveau — fournisseur séparé, uniquement si GROQ_API_KEY est
+  // configurée. Jamais essayé avant d'avoir épuisé tout OpenRouter.
+  if (groq) {
+    console.log(`[model-router] 🚀 role=${role} — essai de ${GROQ_MODELS.length} modèles Groq`)
+    for (const model of GROQ_MODELS) {
+      const text = await tryModel(groq, model, system, userMessage, maxTokens)
+      if (text) return { text, model_used: `groq:${model}` }
+    }
   }
 
   console.log(`[model-router] ⚠️ tous les modèles ont échoué pour role=${role}`)
