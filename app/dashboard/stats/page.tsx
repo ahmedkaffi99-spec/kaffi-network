@@ -36,7 +36,7 @@ export default async function StatsPage() {
     <div>
       <Header title="Statistiques" subtitle="Performances et historique des résultats" />
 
-      <div className="p-8 space-y-6">
+      <div className="p-4 sm:p-8 space-y-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatsWidget label="Total picks" value={allPicks.length} sub="Résultats connus" icon="📋" />
           <StatsWidget label="Taux de réussite" value={`${winRate}%`} sub={`${wins}W / ${losses}L / ${voids} nuls`} highlight icon="🎯" />

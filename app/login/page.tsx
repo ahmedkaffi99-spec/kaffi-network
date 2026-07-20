@@ -43,10 +43,11 @@ export default function LoginPage() {
             <span className="text-2xl">⚡</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            <span className="text-gold-400">KAFFI</span>
-            <span className="text-white ml-2">NETWORK</span>
+            <span className="text-gold-400">IA</span>
+            <span className="text-white ml-2">PRONOSTICS</span>
           </h1>
-          <p className="text-gray-500 mt-2 text-sm">Panneau d&apos;administration privé</p>
+          <p className="text-gold-500/70 text-xs font-semibold tracking-[0.2em] mt-1">& COUPONS</p>
+          <p className="text-gray-500 mt-3 text-sm">Panneau d&apos;administration privé</p>
         </div>
 
         {/* Card */}

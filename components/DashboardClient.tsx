@@ -82,7 +82,7 @@ export function DashboardClient({ todaySessions, stats }: Props) {
         }
       />
 
-      <div className="p-8 space-y-6">
+      <div className="p-4 sm:p-8 space-y-6">
         {genError && (
           <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-400 text-sm flex items-start gap-2">
             <span className="flex-shrink-0">⚠</span>

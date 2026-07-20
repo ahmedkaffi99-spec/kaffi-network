@@ -58,7 +58,7 @@ export function PronosticsClient({ sessions }: Props) {
     <div>
       <Header title="Pronostics" subtitle="Combinés générés par l'IA — validation et publication" />
 
-      <div className="p-8">
+      <div className="p-4 sm:p-8">
         <div className="flex items-center gap-1 mb-6 p-1 bg-navy-800/50 border border-navy-700/50 rounded-xl w-fit flex-wrap">
           {FILTERS.map(f => (
             <button

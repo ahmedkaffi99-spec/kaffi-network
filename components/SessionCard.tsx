@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { PronosticSession } from '@/lib/types'
 import { Button } from '@/components/ui/Button'
@@ -174,14 +175,23 @@ export function SessionCard({ session, onApprove, onReject, onPublish }: Session
           </div>
         )}
 
-        {/* Toggle picks */}
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1.5 mb-4 transition"
-        >
-          <span>{expanded ? '▲' : '▼'}</span>
-          <span>{expanded ? 'Masquer' : 'Voir'} les picks</span>
-        </button>
+        {/* Toggle picks + lien détail */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1.5 transition"
+          >
+            <span>{expanded ? '▲' : '▼'}</span>
+            <span>{expanded ? 'Masquer' : 'Voir'} les picks</span>
+          </button>
+          <Link
+            href={`/dashboard/pronostics/${session.id}`}
+            className="text-xs text-gray-500 hover:text-gold-400 flex items-center gap-1 transition"
+          >
+            <span>Détail complet</span>
+            <span>→</span>
+          </Link>
+        </div>
 
         {/* Picks list */}
         {expanded && picks.length > 0 && (

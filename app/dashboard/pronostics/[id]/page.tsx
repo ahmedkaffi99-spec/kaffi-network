@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Header } from '@/components/Header'
@@ -74,7 +75,17 @@ export default async function PronosticDetailPage({ params }: { params: Promise<
         subtitle={`ID : ${session.id.slice(0, 8)}…`}
       />
 
-      <div className="p-8 space-y-5">
+      <div className="px-4 sm:px-8 pt-6">
+        <Link
+          href="/dashboard/pronostics"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gold-400 transition"
+        >
+          <span>←</span>
+          <span>Retour aux pronostics</span>
+        </Link>
+      </div>
+
+      <div className="p-4 sm:p-8 space-y-5">
         {/* Status + meta */}
         <div className="flex items-center gap-3 flex-wrap">
           <span className="px-3 py-1 text-xs font-semibold rounded-full border border-navy-600/50 bg-navy-800/40 text-gray-300">

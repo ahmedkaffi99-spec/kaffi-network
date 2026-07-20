@@ -1,4 +1,4 @@
-import { Sidebar } from '@/components/Sidebar'
+import { DashboardShell } from '@/components/DashboardShell'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
@@ -12,10 +12,5 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/login')
   }
 
-  return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-auto min-w-0">{children}</main>
-    </div>
-  )
+  return <DashboardShell userEmail={user.email ?? null}>{children}</DashboardShell>
 }
