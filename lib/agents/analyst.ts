@@ -3,7 +3,7 @@ import type { Blackboard } from '@/lib/agent-kernel/blackboard'
 import type { RunBudget, AgentMission } from '@/lib/agent-kernel/types'
 import type { PlannerOutput, AnalystOutput } from '@/lib/types'
 import { getTodayMatches, buildMatchAnalysisData, type TodayMatch, type MatchAnalysisData, type TeamMatchResult } from '@/lib/tools/football-api'
-import { getTodayOdds, findMatchOdds, type MatchOdds } from '@/lib/tools/odds-api'
+import { getTodayOdds, findMatchOdds, isKnownLeague, type MatchOdds } from '@/lib/tools/odds-api'
 import { checkTeamNews } from '@/lib/tools/serper'
 
 const MIN_TREND_PCT = 80
@@ -121,7 +121,13 @@ Actualités ${match.away_team.name}: ${awayNews}
 Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
     }
   } else {
-    for (const event of odds.slice(0, 20)) {
+    // Sans API-Football pour recadrer la sélection, on se limite aux
+    // championnats reconnaissables — sinon les 20 premiers événements
+    // renvoyés par l'API de cotes (qui interroge tout le foot mondial)
+    // peuvent inclure des ligues obscures que les abonnés ne connaissent pas.
+    const knownLeagueOdds = odds.filter(o => isKnownLeague(o.sport_key))
+
+    for (const event of knownLeagueOdds.slice(0, 20)) {
       const lines = oddsLines(event)
       if (!lines.length) continue
 
@@ -246,6 +252,7 @@ Réponds UNIQUEMENT JSON :
 
   const userMessage = `Focus du jour : ${plannerOutput.focus_areas.join(', ')}
 Contexte : ${plannerOutput.context}
+${plannerOutput.trending_matches.length ? `Affiches identifiées par recherche web comme notables aujourd'hui (priorise-les si elles apparaissent dans les données ci-dessous, sans jamais assouplir les seuils pour les inclure) : ${plannerOutput.trending_matches.join(', ')}` : ''}
 
 Données des matchs :
 ${enriched.join('\n\n')}`

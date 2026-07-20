@@ -42,3 +42,30 @@ export async function checkTeamNews(teamName: string): Promise<string> {
     .map(r => `[${r.source ?? 'Source'}] ${r.title}: ${r.snippet}`)
     .join(' | ')
 }
+
+// Découverte AVANT toute analyse chiffrée — identifie les matchs dont on
+// parle réellement aujourd'hui (calendrier, affiches marquantes), pour que
+// le Planificateur ancre son plan sur du réel plutôt que sur sa seule
+// connaissance générale. Plusieurs requêtes complémentaires, dédupliquées
+// par lien, plafonnées à 15 résultats.
+export async function searchTrendingMatches(dateLabel: string): Promise<SerperResult[]> {
+  const queries = [
+    `programme matchs football ${dateLabel}`,
+    `pronostics foot du jour meilleurs matchs ${dateLabel}`,
+  ]
+
+  const batches = await Promise.all(queries.map(q => searchNews(q, 10)))
+  const seen = new Set<string>()
+  const merged: SerperResult[] = []
+
+  for (const batch of batches) {
+    for (const result of batch) {
+      if (seen.has(result.link)) continue
+      seen.add(result.link)
+      merged.push(result)
+      if (merged.length >= 15) return merged
+    }
+  }
+
+  return merged
+}

@@ -53,6 +53,7 @@ export interface PlannerOutput {
   date: string
   competitions: string[]
   focus_areas: string[]
+  trending_matches: string[]
   context: string
   reasoning?: string
   model_used?: string

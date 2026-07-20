@@ -6,6 +6,8 @@ interface OddsMarket { key: string; outcomes: OddsOutcome[] }
 interface OddsBookmaker { key: string; title: string; markets: OddsMarket[] }
 interface OddsEvent {
   id: string
+  sport_key: string
+  sport_title: string
   home_team: string
   away_team: string
   commence_time: string
@@ -15,7 +17,40 @@ interface OddsEvent {
 // Bookmaker prioritaire pour la cote finale — cohérence avec le lien affilié.
 const PRIORITY_BOOKMAKER_KEY = '1xbet'
 
+// Le sport_key 'soccer' interroge TOUTES les compétitions en une requête —
+// pratique pour économiser le quota, mais ça inclut des championnats
+// obscurs (réserves, divisions mineures de pays peu suivis) que les
+// abonnés ne reconnaissent pas. Utilisé pour filtrer en mode "cotes
+// uniquement" (lib/agents/analyst.ts), où il n'y a pas de données
+// API-Football pour recadrer la sélection — même liste de championnats
+// "connus" que lib/tools/flags.ts::COMPETITION_FLAG, pour rester cohérent.
+const KNOWN_LEAGUE_SPORT_KEYS = [
+  'epl', // Premier League (soccer_epl)
+  'efl_champ', // Championship
+  'la_liga', // La Liga
+  'serie_a', // Serie A (Italie)
+  'bundesliga', // Bundesliga
+  'ligue_one', // Ligue 1
+  'primeira_liga', // Liga Portugal
+  'eredivisie', // Eredivisie
+  'brazil_campeonato', // Campeonato Brasileiro
+  'champs_league', // Ligue des Champions (UEFA + autres confédérations)
+  'europa_league', // Europa League
+  'conference_league', // Conference League
+  'fifa_world_cup', // Coupe du monde
+  'uefa_euro', // Euro (UEFA)
+  'mls', // Major League Soccer
+  'liga_mx', // Liga MX
+]
+
+export function isKnownLeague(sportKey: string): boolean {
+  const key = sportKey.toLowerCase()
+  return KNOWN_LEAGUE_SPORT_KEYS.some(k => key.includes(k))
+}
+
 export interface MatchOdds {
+  sport_key: string
+  sport_title: string
   home_team: string
   away_team: string
   commence_time: string
@@ -53,6 +88,8 @@ export async function getTodayOdds(region = 'eu'): Promise<MatchOdds[]> {
     }
 
     return {
+      sport_key: event.sport_key,
+      sport_title: event.sport_title,
       home_team: event.home_team,
       away_team: event.away_team,
       commence_time: event.commence_time,
