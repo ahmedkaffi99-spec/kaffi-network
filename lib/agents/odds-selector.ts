@@ -48,6 +48,15 @@ function matchLabel(pick: PickCandidate): string {
   return `${pick.home_team} - ${pick.away_team} (${pick.bet_type})`
 }
 
+// Identifie le MATCH (pas le pick) — l'Analyste peut proposer plusieurs
+// prédictions indépendantes sur un même match (ex: "Over 2.5" et "BTTS
+// Oui" pour PSG-Barça), mais un seul de ces picks doit finir dans UN
+// combiné donné : deux paris sur le même match dans le même coupon sont
+// des résultats corrélés, pas une vraie diversification.
+function matchKey(pick: PickCandidate): string {
+  return `${pick.home_team}-${pick.away_team}`
+}
+
 /**
  * ÉTAPE 1 — cote fiable par pick candidat. Un pick déjà validé par
  * l'Analyste peut être rejeté ici si le marché est jugé trop incertain
@@ -95,15 +104,38 @@ function combinedOddsOf(picks: ReliablePick[]): number {
   return Math.round(picks.reduce((acc, p) => acc * p.odds, 1) * 100) / 100
 }
 
+// Un seul pick par match dans un même combiné — voir matchKey().
+function takeUniqueByMatch(sorted: ReliablePick[], count: number): ReliablePick[] {
+  const result: ReliablePick[] = []
+  const seen = new Set<string>()
+  for (const pick of sorted) {
+    if (result.length >= count) break
+    const key = matchKey(pick)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(pick)
+  }
+  return result
+}
+
 /** Alterne du bas puis du haut d'une liste triée par cote croissante — mélange équilibré des risques. */
 function interleaveFromBothEnds(sortedAsc: ReliablePick[], count: number): ReliablePick[] {
   const result: ReliablePick[] = []
+  const seen = new Set<string>()
   let lo = 0
   let hi = sortedAsc.length - 1
   let takeLow = true
 
   while (result.length < count && lo <= hi) {
-    result.push(takeLow ? sortedAsc[lo++] : sortedAsc[hi--])
+    const candidate = takeLow ? sortedAsc[lo] : sortedAsc[hi]
+    if (takeLow) lo++
+    else hi--
+
+    const key = matchKey(candidate)
+    if (seen.has(key)) continue // retente le même côté, pointeur déjà avancé
+
+    seen.add(key)
+    result.push(candidate)
     takeLow = !takeLow
   }
 
@@ -131,26 +163,30 @@ function composeTiers(reliable: ReliablePick[]): { combos: Partial<Record<Tier, 
 
   const byOddsAsc = [...reliable].sort((a, b) => a.odds - b.odds)
   const byOddsDesc = [...byOddsAsc].reverse()
+  // Le vrai plafond, c'est le nombre de MATCHS distincts — plusieurs picks
+  // fiables sur le même match (ex: Over 2.5 ET BTTS Oui pour PSG-Barça) ne
+  // comptent qu'une fois, un seul finira dans un combiné donné.
+  const uniqueMatchCount = new Set(reliable.map(matchKey)).size
 
   for (const tier of ['prudent', 'equilibre', 'audacieux'] as Tier[]) {
     const { min, max } = TIER_PICK_RANGE[tier]
 
-    if (reliable.length < min) {
+    if (uniqueMatchCount < min) {
       decisions.push({
         match: '—',
         tier,
         included: false,
-        reason: `Seulement ${reliable.length} picks fiables — minimum ${min} requis pour le palier ${tier}`,
+        reason: `Seulement ${uniqueMatchCount} matchs distincts avec cote fiable — minimum ${min} requis pour le palier ${tier}`,
       })
       continue
     }
 
-    const count = Math.min(max, reliable.length)
+    const count = Math.min(max, uniqueMatchCount)
 
     if (tier === 'prudent') {
-      combos.prudent = buildCombo('prudent', byOddsAsc.slice(0, count), `${count} picks à cote individuelle basse — vise à gagner majoritairement`, decisions)
+      combos.prudent = buildCombo('prudent', takeUniqueByMatch(byOddsAsc, count), `${count} picks à cote individuelle basse — vise à gagner majoritairement`, decisions)
     } else if (tier === 'audacieux') {
-      combos.audacieux = buildCombo('audacieux', byOddsDesc.slice(0, count), `${count} picks à cote individuelle haute — gain rare mais élevé`, decisions)
+      combos.audacieux = buildCombo('audacieux', takeUniqueByMatch(byOddsDesc, count), `${count} picks à cote individuelle haute — gain rare mais élevé`, decisions)
     } else {
       combos.equilibre = buildCombo('equilibre', interleaveFromBothEnds(byOddsAsc, count), `${count} picks — mélange de cotes basses et hautes`, decisions)
     }
