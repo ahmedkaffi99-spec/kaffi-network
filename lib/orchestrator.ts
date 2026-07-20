@@ -204,14 +204,15 @@ export async function runPipeline(date?: string, runId?: string): Promise<Orches
     const longTermDigest = await loadLongTermDigest(SCOPE)
     blackboard.write('longTermMemory', longTermDigest)
 
-    // ── Planner ───────────────────────────────────────────────────────────
-    const plannerOutput = await runPlanner(targetDate, blackboard, budget)
-
-    // ── Analyste (perception + raisonnement LLM, produit des CANDIDATS) et
-    //    Sélecteur de cotes (cotes fiables + composition des 3 combinés,
-    //    déterministe) — fusionnés en un seul appel depuis l'orchestrateur,
-    //    voir lib/agents/analyst.ts:runAnalystAndOdds ─────────────────────
-    const { analystOutput, oddsSelectorOutput } = await runAnalystAndOdds(plannerOutput, blackboard, budget)
+    // ── Planner + perception de l'Analyste EN PARALLÈLE ─────────────────────
+    // La perception (API-Football, cotes, actualités) ne dépend que de la
+    // date, connue avant même que le Planificateur ne tourne — les faire
+    // démarrer ensemble économise le temps du Planificateur (recherche web +
+    // appel modèle) au lieu de l'attendre pour rien avant de commencer la
+    // partie la plus longue du run. Voir lib/agents/analyst.ts:runAnalystAndOdds.
+    const plannerPromise = runPlanner(targetDate, blackboard, budget)
+    const { analystOutput, oddsSelectorOutput } = await runAnalystAndOdds(targetDate, plannerPromise, blackboard, budget)
+    const plannerOutput = await plannerPromise
 
     if (!analystOutput.picks_retenus.length || !oddsSelectorOutput) {
       return { success: false, message: 'Aucun pick candidat retenu par l\'analyste.', tiers: [], runId: effectiveRunId }

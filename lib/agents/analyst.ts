@@ -30,6 +30,27 @@ const MISSION: AgentMission = {
   ],
 }
 
+// Traite `items` avec au plus `limit` appels de `fn` en vol simultanément,
+// en conservant l'ordre des résultats. Utilisé pour les recherches Serper
+// par match (aucune limite de débit connue côté Serper, contrairement à
+// API-Football qui a son propre throttling dans football-api.ts et ne doit
+// jamais passer par ici) — remplace une boucle for/await strictement
+// séquentielle qui attendait chaque match l'un après l'autre pour rien.
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  async function worker() {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+const NEWS_FETCH_CONCURRENCY = 5
+
 function calcTrend(history: TeamMatchResult[], predicate: (m: TeamMatchResult) => boolean): { pct: number; count: number } {
   if (!history.length) return { pct: 0, count: 0 }
   const matching = history.filter(predicate).length
@@ -113,21 +134,22 @@ export interface AnalystContext {
  * interdisait d'augmenter le budget d'itérations sans risquer le timeout
  * Vercel (300s).
  */
+// Prend `date` directement (pas plannerOutput) — permet à l'orchestrateur de
+// lancer cette phase EN PARALLÈLE du Planificateur (voir runAnalystAndOdds
+// ci-dessous) au lieu d'attendre que le plan soit prêt pour rien : cette
+// fonction n'a besoin que de la date ciblée, connue avant même que le
+// Planificateur ne tourne.
 export async function gatherAnalystContext(
-  plannerOutput: PlannerOutput,
+  date: string,
   blackboard: Blackboard
 ): Promise<AnalystContext> {
-  // plannerOutput.date est la date ciblée par ce run (par défaut aujourd'hui,
-  // mais peut être une date future explicitement demandée) — sans la
-  // transmettre ici, l'API-Football et l'API de cotes ignoraient cette
-  // date et regarderaient toujours "maintenant" au moment de l'appel.
-  const [odds, memoryContext] = await Promise.all([getTodayOdds('eu', plannerOutput.date), loadMediumTermDigest()])
+  const [odds, memoryContext] = await Promise.all([getTodayOdds('eu', date), loadMediumTermDigest()])
 
   let analysisData: MatchAnalysisData[] = []
   let oddsOnlyMode = false
 
   try {
-    const matches: TodayMatch[] = await getTodayMatches(plannerOutput.date)
+    const matches: TodayMatch[] = await getTodayMatches(date)
     if (matches.length > 0) {
       analysisData = await buildMatchAnalysisData(matches)
     }
@@ -149,9 +171,13 @@ export async function gatherAnalystContext(
       teamLogos.set(match.away_team.name.trim().toLowerCase(), match.away_team.logo)
     }
 
-    for (const { match, home_team_last_matches, away_team_last_matches } of analysisData) {
+    // Les recherches Serper (2 par match) ne dépendent pas les unes des
+    // autres — avant, chaque match attendait la fin du précédent pour rien,
+    // ce qui ajoutait plusieurs secondes inutiles à un run déjà dominé par
+    // le rate-limit d'API-Football (7s/appel, lui incompressible).
+    const perMatch = await mapWithConcurrency(analysisData, NEWS_FETCH_CONCURRENCY, async ({ match, home_team_last_matches, away_team_last_matches }) => {
       const matchOdds = findMatchOdds(odds, match.home_team.name, match.away_team.name)
-      if (!matchOdds) continue
+      if (!matchOdds) return null
 
       const homeH = home_team_last_matches
       const awayH = away_team_last_matches
@@ -174,32 +200,34 @@ export async function gatherAnalystContext(
       const awayForm5 = formPoints(awayH, 5)
 
       const lines = oddsLines(matchOdds)
-      if (!lines.length) continue
+      if (!lines.length) return null
 
       const [homeNews, awayNews] = await Promise.all([
         checkTeamNews(match.home_team.name),
         checkTeamNews(match.away_team.name),
       ])
 
-      enriched.push(`MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
+      return `MATCH: ${match.home_team.name} vs ${match.away_team.name} (${match.competition}) — ${match.datetime}
 Domicile ${match.home_team.name} (${homeH.length} matchs): ${goalLineTrends(homeH)}, btts=${homeBtts.pct}%, wins_home=${homeWins.pct}%, nul=${homeDraws.pct}%, cage_inviolee=${homeCleanSheet.pct}%, victoire_large(2+ buts)=${homeBigWin.pct}%
 Extérieur ${match.away_team.name} (${awayH.length} matchs): ${goalLineTrends(awayH)}, btts=${awayBtts.pct}%, wins_ext=${awayWins.pct}%, nul=${awayDraws.pct}%, cage_inviolee=${awayCleanSheet.pct}%
 Forme récente ${match.home_team.name} (5 derniers): ${homeForm5.points}/${homeForm5.max} pts, ${avgGoals(homeH, 5, 'goals_for')} buts marqués/match, ${avgGoals(homeH, 5, 'goals_against')} encaissés/match, série de victoires en cours=${winStreak(homeH)}, invaincu sur 5=${unbeatenStreak(homeH, 5) ? 'oui' : 'non'}
 Forme récente ${match.away_team.name} (5 derniers): ${awayForm5.points}/${awayForm5.max} pts, ${avgGoals(awayH, 5, 'goals_for')} buts marqués/match, ${avgGoals(awayH, 5, 'goals_against')} encaissés/match, série de victoires en cours=${winStreak(awayH)}, invaincu sur 5=${unbeatenStreak(awayH, 5) ? 'oui' : 'non'}
 Actualités ${match.home_team.name}: ${homeNews}
 Actualités ${match.away_team.name}: ${awayNews}
-Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
-    }
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`
+    })
+
+    enriched.push(...perMatch.filter((line): line is string => line !== null))
   } else {
     // Sans API-Football pour recadrer la sélection, on se limite aux
     // championnats reconnaissables — sinon les 20 premiers événements
     // renvoyés par l'API de cotes (qui interroge tout le foot mondial)
     // peuvent inclure des ligues obscures que les abonnés ne connaissent pas.
-    const knownLeagueOdds = odds.filter(o => isKnownLeague(o.sport_key))
+    const knownLeagueOdds = odds.filter(o => isKnownLeague(o.sport_key)).slice(0, 20)
 
-    for (const event of knownLeagueOdds.slice(0, 20)) {
+    const perEvent = await mapWithConcurrency(knownLeagueOdds, NEWS_FETCH_CONCURRENCY, async event => {
       const lines = oddsLines(event)
-      if (!lines.length) continue
+      if (!lines.length) return null
 
       const [homeNews, awayNews] = await Promise.all([
         checkTeamNews(event.home_team),
@@ -211,12 +239,14 @@ Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}): ${lines.join(', ')}`)
         return `${l} (prob. implicite: ${Math.round((1 / oddsVal) * 100)}%)`
       })
 
-      enriched.push(`MATCH: ${event.home_team} vs ${event.away_team} — ${event.commence_time}
+      return `MATCH: ${event.home_team} vs ${event.away_team} — ${event.commence_time}
 [MODE COTES UNIQUEMENT — données historiques indisponibles]
 Actualités ${event.home_team}: ${homeNews}
 Actualités ${event.away_team}: ${awayNews}
-Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${impliedProbs.join(', ')}`)
-    }
+Cotes disponibles (${MIN_ODDS}–${MAX_ODDS}) avec probabilité implicite : ${impliedProbs.join(', ')}`
+    })
+
+    enriched.push(...perEvent.filter((line): line is string => line !== null))
   }
 
   blackboard.post({
@@ -367,13 +397,22 @@ ${enriched.join('\n\n')}`
  * Le Sélecteur de cotes reste un module séparé en interne (odds-selector.ts)
  * et reste 100% déterministe — cette fusion ne touche à aucune logique,
  * elle réduit seulement le nombre d'étapes visibles dans le pipeline.
+ *
+ * `plannerOutputPromise` plutôt qu'un PlannerOutput déjà résolu : la
+ * perception (gatherAnalystContext) ne dépend que de `date`, connue avant
+ * même que le Planificateur ne tourne — les deux démarrent donc en
+ * parallèle ici, et seul le raisonnement de l'Analyste (qui a besoin du
+ * plan) attend que le Planificateur ait fini. Avant, le Planificateur
+ * bloquait inutilement le début de la perception.
  */
 export async function runAnalystAndOdds(
-  plannerOutput: PlannerOutput,
+  date: string,
+  plannerOutputPromise: Promise<PlannerOutput>,
   blackboard: Blackboard,
   budget: RunBudget
 ): Promise<{ analystOutput: AnalystOutput; oddsSelectorOutput: OddsSelectorOutput | null }> {
-  const context = await gatherAnalystContext(plannerOutput, blackboard)
+  const contextPromise = gatherAnalystContext(date, blackboard)
+  const [plannerOutput, context] = await Promise.all([plannerOutputPromise, contextPromise])
   const analystOutput = await reasonAnalystPicks(plannerOutput, context, undefined, blackboard, budget)
 
   blackboard.post({
