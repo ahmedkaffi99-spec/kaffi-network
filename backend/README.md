@@ -33,6 +33,38 @@ Génère une valeur longue et aléatoire, par exemple :
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
+### Installation sur Termux (Android)
+
+`numpy`/`scipy`/`lxml`/`Pillow` ont du code natif (C/Fortran) — les laisser
+se compiler depuis zéro via `pip` sur un téléphone est lent et échoue
+souvent (pas de compilateur Fortran par défaut). Termux fournit ces
+paquets déjà compilés via `pkg` — les installer comme ça, PUIS le reste
+via `pip` :
+
+```bash
+pkg update && pkg upgrade
+pkg install python git python-numpy python-scipy python-lxml python-pillow libjpeg-turbo
+
+git clone <url-du-repo>
+cd kaffi-network && git checkout claude/code-session-hzweq0
+cd backend
+
+# --system-site-packages : hérite des paquets natifs installés par pkg
+# ci-dessus au lieu de tenter de les recompiler dans le venv.
+python -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install fastapi "uvicorn[standard]" httpx python-dotenv python-multipart supabase apscheduler pydantic beautifulsoup4
+
+cp .env.example .env
+pkg install nano   # ou l'éditeur de ton choix
+nano .env          # remplis tes vraies clés
+```
+
+Ensuite, mêmes commandes que d'habitude (`python scripts/analyze_specific_matches.py`,
+`uvicorn app:app ...`). Si `pip install` réessaie quand même de compiler
+`numpy`/`scipy`/`lxml`/`Pillow` depuis zéro, vérifie que le venv a bien été
+créé avec `--system-site-packages`.
+
 ## Lancement
 
 ```bash
