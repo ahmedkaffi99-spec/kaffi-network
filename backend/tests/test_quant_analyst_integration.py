@@ -123,3 +123,103 @@ async def test_oddspapi_price_takes_priority_over_the_odds_api(monkeypatch):
     assert home_win_bets
     assert home_win_bets[0].bookmaker_odds == 3.0
     assert home_win_bets[0].bookmaker_spread_pct is None
+
+
+# ============================================================
+# analyze_named_fixture(s) — résolution par nom, indépendante du calendrier
+# API-Football (voir tools/football_api.py::get_today_matches, restreint à
+# une fenêtre de dates proche d'aujourd'hui sur le plan gratuit).
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixture_uses_api_football_when_available(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_thesportsdb_get_team_history(*_args, **_kwargs):
+        raise AssertionError("TheSportsDB ne devrait pas être appelé quand API-Football répond déjà")
+
+    # team_id distingue StrongFC (id=1) de WeakFC (id=2), attribué dans
+    # l'ordre d'appel de search_af_team (StrongFC toujours résolu en premier
+    # par _resolve_team_history dans analyze_named_fixture).
+    call_names: list[str] = []
+
+    async def fake_search_af_team(name):
+        call_names.append(name)
+        return TeamRef(id=len(call_names), name=name, logo="")
+
+    async def fake_get_af_team_history(team_id, _limit=15):
+        return strong_history if team_id == 1 else weak_history
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst, "get_af_team_history", fake_get_af_team_history)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+
+    value_bets = await quant_analyst.analyze_named_fixture("StrongFC", "WeakFC", "Premier League", "date non confirmée")
+
+    home_win_bets = [vb for vb in value_bets if vb.selection == "Victoire domicile"]
+    assert home_win_bets
+    assert home_win_bets[0].edge > 0
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixture_falls_back_to_thesportsdb(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_search_af_team(_name):
+        return None  # API-Football ne trouve pas l'équipe (ou quota épuisé)
+
+    async def fake_thesportsdb_get_team_history(name, _limit=15):
+        return strong_history if name == "StrongFC" else weak_history
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+
+    value_bets = await quant_analyst.analyze_named_fixture("StrongFC", "WeakFC", "Premier League", "date non confirmée")
+
+    home_win_bets = [vb for vb in value_bets if vb.selection == "Victoire domicile"]
+    assert home_win_bets
+    assert home_win_bets[0].edge > 0
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixture_insufficient_history_returns_empty(monkeypatch):
+    async def fake_search_af_team(_name):
+        return None
+
+    async def fake_thesportsdb_get_team_history(*_args, **_kwargs):
+        return None  # aucune source n'a d'historique exploitable
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+
+    value_bets = await quant_analyst.analyze_named_fixture("Obscure FC", "Unknown United", "Premier League", "date non confirmée")
+    assert value_bets == []
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixtures_aggregates_and_sorts(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_search_af_team(_name):
+        return None
+
+    async def fake_thesportsdb_get_team_history(name, _limit=15):
+        return strong_history if name == "StrongFC" else weak_history
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+
+    value_bets = await quant_analyst.analyze_named_fixtures(
+        [
+            ("StrongFC", "WeakFC", "Premier League", "date non confirmée"),
+            ("StrongFC", "WeakFC", "Ligue 1", "date non confirmée"),
+        ]
+    )
+
+    assert len(value_bets) > 0
+    confidences = [vb.confidence for vb in value_bets]
+    assert confidences == sorted(confidences, reverse=True)

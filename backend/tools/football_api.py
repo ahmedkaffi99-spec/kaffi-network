@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from .odds_api import team_similarity
 from .quota_tracker import get_remaining_quota, increment_quota
 
 BASE_URL = "https://v3.football.api-sports.io"
@@ -108,6 +109,13 @@ def _map_fixture_to_team_match_result(entry: dict, team_id: int) -> TeamMatchRes
 
 
 async def get_today_matches(date: str | None = None) -> list[TodayMatch]:
+    """ATTENTION : `/fixtures?date=X` est restreint par le plan gratuit
+    API-Football à une fenêtre étroite autour d'aujourd'hui (constaté en
+    pratique : "Free plans do not have access to this date, try from
+    J-1 to J+1") — inutilisable pour découvrir une affiche à une date
+    lointaine (ex: dans un mois). Pour ce cas, voir `search_team` +
+    `get_team_history` ci-dessous (résolution par NOM, pas par date), et
+    agents/quant_analyst.py::analyze_named_fixtures qui les utilise."""
     target_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     data = await _track_request(f"/fixtures?date={target_date}", 1)
 
@@ -118,7 +126,36 @@ async def get_today_matches(date: str | None = None) -> list[TodayMatch]:
     ]
 
 
-async def _get_team_history(team_id: int, limit: int = 15) -> list[TeamMatchResult]:
+async def search_team(name: str) -> TeamRef | None:
+    """Résout un nom d'équipe en TeamRef via `/teams?search=NAME` —
+    contrairement à `/fixtures?date=`, cet endpoint n'est PAS restreint à une
+    fenêtre de dates proche d'aujourd'hui (juste une recherche par nom),
+    donc utilisable pour préparer l'analyse d'une affiche à n'importe quelle
+    date, même lointaine."""
+    data = await _track_request(f"/teams?search={name}", 1)
+    entries = data.get("response", [])
+    if not entries:
+        return None
+
+    best, best_score = None, -1.0
+    for entry in entries:
+        team = entry.get("team", {})
+        score = team_similarity(team.get("name", ""), name)
+        if score > best_score:
+            best_score, best = score, team
+
+    if best_score < 0.3 or best is None:
+        return None
+
+    return TeamRef(id=best["id"], name=best["name"], logo=best.get("logo", ""))
+
+
+async def get_team_history(team_id: int, limit: int = 15) -> list[TeamMatchResult]:
+    """Historique récent d'une équipe par ID — restreint par SAISON (le plan
+    gratuit ne donne accès qu'aux saisons 2022-2024, cf. `season=2024`
+    ci-dessous), pas par la date réelle d'aujourd'hui (contrairement à
+    `/fixtures?date=`) — utilisable pour analyser une affiche à venir dans
+    plusieurs semaines/mois."""
     await asyncio.sleep(RATE_LIMIT_SLEEP)
     data = await _track_request(f"/fixtures?team={team_id}&season=2024", 1)
 
@@ -146,11 +183,11 @@ async def build_match_analysis_data(matches: list[TodayMatch], history_limit: in
             break
 
         if not home_in_cache:
-            cache[match.home_team.id] = await _get_team_history(match.home_team.id, history_limit)
+            cache[match.home_team.id] = await get_team_history(match.home_team.id, history_limit)
             remaining -= cost_per_team
 
         if not away_in_cache:
-            cache[match.away_team.id] = await _get_team_history(match.away_team.id, history_limit)
+            cache[match.away_team.id] = await get_team_history(match.away_team.id, history_limit)
             remaining -= cost_per_team
 
         result.append(

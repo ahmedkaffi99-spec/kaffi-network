@@ -1,0 +1,120 @@
+"""Tests de tools/football_api.py::search_team et get_team_history — mêmes
+principes que tests/test_oddspapi.py : un faux client httpx, la quota
+Supabase et le rate-limit réel sont neutralisés pour ne tester que la
+logique de parsing/correspondance."""
+import pytest
+
+import tools.football_api as football_api
+
+FAKE_TEAMS_SEARCH_RESPONSE = {
+    "response": [
+        {"team": {"id": 541, "name": "Real Madrid", "logo": "https://example.com/541.png"}},
+        {"team": {"id": 542, "name": "Real Madrid Castilla", "logo": "https://example.com/542.png"}},
+    ]
+}
+
+FAKE_FIXTURES_BY_TEAM_RESPONSE = {
+    "response": [
+        {
+            "fixture": {"id": 1, "date": "2024-05-01T20:00:00+00:00", "status": {"short": "FT"}},
+            "league": {"name": "La Liga"},
+            "teams": {"home": {"id": 541, "name": "Real Madrid"}, "away": {"id": 999, "name": "Sevilla"}},
+            "goals": {"home": 3, "away": 1},
+        },
+        {
+            "fixture": {"id": 2, "date": "2024-04-20T20:00:00+00:00", "status": {"short": "FT"}},
+            "league": {"name": "La Liga"},
+            "teams": {"home": {"id": 998, "name": "Barcelona"}, "away": {"id": 541, "name": "Real Madrid"}},
+            "goals": {"home": 2, "away": 2},
+        },
+        {
+            # Match pas encore joué — doit être filtré (hors FINISHED_STATUSES).
+            "fixture": {"id": 3, "date": "2024-06-01T20:00:00+00:00", "status": {"short": "NS"}},
+            "league": {"name": "La Liga"},
+            "teams": {"home": {"id": 541, "name": "Real Madrid"}, "away": {"id": 997, "name": "Betis"}},
+            "goals": {"home": None, "away": None},
+        },
+    ]
+}
+
+
+class _FakeResponse:
+    def __init__(self, json_data, is_success=True):
+        self._json_data = json_data
+        self.is_success = is_success
+        self.status_code = 200 if is_success else 500
+        self.text = ""
+
+    def json(self):
+        return self._json_data
+
+
+class _FakeAsyncClient:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, headers=None, timeout=None):
+        return self._response
+
+
+@pytest.fixture(autouse=True)
+def _patch_boundaries(monkeypatch):
+    monkeypatch.setenv("API_FOOTBALL_KEY", "test-key")
+    monkeypatch.setattr(football_api, "increment_quota", lambda *_a, **_k: None)
+
+    async def instant_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(football_api.asyncio, "sleep", instant_sleep)
+
+
+@pytest.mark.asyncio
+async def test_search_team_picks_best_fuzzy_match(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse(FAKE_TEAMS_SEARCH_RESPONSE)))
+
+    team = await football_api.search_team("Real Madrid")
+    assert team is not None
+    assert team.id == 541
+    assert team.name == "Real Madrid"
+
+
+@pytest.mark.asyncio
+async def test_search_team_no_results_returns_none(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse({"response": []})))
+
+    assert await football_api.search_team("Nonexistent FC") is None
+
+
+@pytest.mark.asyncio
+async def test_get_team_history_filters_finished_matches_and_maps_home_away(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse(FAKE_FIXTURES_BY_TEAM_RESPONSE)))
+
+    history = await football_api.get_team_history(541, limit=15)
+
+    assert len(history) == 2  # le match "NS" (pas encore joué) est exclu
+
+    home_match = next(m for m in history if m.opponent == "Sevilla")
+    assert home_match.home is True
+    assert home_match.goals_for == 3
+    assert home_match.goals_against == 1
+    assert home_match.result == "W"
+
+    away_match = next(m for m in history if m.opponent == "Barcelona")
+    assert away_match.home is False
+    assert away_match.goals_for == 2  # buts de Real Madrid (away) dans ce match
+    assert away_match.goals_against == 2
+    assert away_match.result == "D"
+
+
+@pytest.mark.asyncio
+async def test_get_team_history_respects_limit(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse(FAKE_FIXTURES_BY_TEAM_RESPONSE)))
+
+    history = await football_api.get_team_history(541, limit=1)
+    assert len(history) == 1

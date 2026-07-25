@@ -160,13 +160,31 @@ statistique") — pas encore les ~18 marchés ni les 7 modèles ML évoqués dan
 le prompt maître d'origine, ni un tableau de bord dédié. Ce sont des
 extensions possibles, pas encore construites.
 
-**Point d'entrée** : `agents/quant_analyst.py::run_quant_analysis(date) ->
-list[ValueBet]`. **Pas câblé dans `orchestrator.py` par défaut** —
-c'est un module autonome, testable et utilisable indépendamment. Le brancher
-à la place (ou en complément) de `agents/analyst.py` dans le pipeline de
-production réelle (qui alimente un vrai canal Telegram) est une décision à
-prendre après avoir comparé ses sorties à des value bets connus, pas un
-changement à faire à l'aveugle.
+**Deux points d'entrée** :
+- `agents/quant_analyst.py::run_quant_analysis(date) -> list[ValueBet]` —
+  tout le calendrier du jour, via `tools/football_api.py::get_today_matches`
+  (`/fixtures?date=`). **Limite connue** : le plan gratuit API-Football
+  restreint cet endpoint à une fenêtre étroite de dates proche
+  d'aujourd'hui (constaté : "Free plans do not have access to this date,
+  try from J-1 to J+1") — inutilisable pour une affiche dans plusieurs
+  semaines.
+- `agents/quant_analyst.py::analyze_named_fixtures(fixtures) ->
+  list[ValueBet]` — une liste précise de `(domicile, extérieur,
+  compétition, date_affichée)`, résolue par NOM d'équipe plutôt que par
+  date (`tools/football_api.py::search_team` + `get_team_history`, qui ne
+  sont restreints que par SAISON — 2022-2024 sur le plan gratuit — pas par
+  la date réelle d'aujourd'hui). TheSportsDB (`tools/thesportsdb.py`, clé
+  de test publique gratuite) sert de second filet si l'équipe est
+  introuvable sur API-Football ou son quota épuisé. C'est le point d'entrée
+  utilisé par `scripts/analyze_specific_matches.py` pour analyser des
+  affiches à venir dans plusieurs semaines/mois.
+
+**Pas câblé dans `orchestrator.py` par défaut** — c'est un module autonome,
+testable et utilisable indépendamment. Le brancher à la place (ou en
+complément) de `agents/analyst.py` dans le pipeline de production réelle
+(qui alimente un vrai canal Telegram) est une décision à prendre après
+avoir comparé ses sorties à des value bets connus, pas un changement à
+faire à l'aveugle.
 
 **Non testé en conditions réelles** : les scrapers Understat/FBref n'ont
 pas pu être validés contre les vrais sites depuis l'environnement de
@@ -210,9 +228,10 @@ supabase_client.py      Client Supabase service-role
 agent_kernel/           Framework générique multi-agents (blackboard, budget, mémoire)
 agents/                 planner, analyst, odds_selector, writer, supervisor, quant_analyst
 quant/                  elo, poisson_model, monte_carlo, value_bet (moteur quantitatif, voir plus haut)
-tools/                  football_api, odds_api, oddspapi, serper, telegram,
-                        image_generator, memory, quota_tracker, result_checker,
-                        duplicate_checker, display_format, understat, fbref
+tools/                  football_api, odds_api, oddspapi, thesportsdb, serper,
+                        telegram, image_generator, memory, quota_tracker,
+                        result_checker, duplicate_checker, display_format,
+                        understat, fbref
 routers/                generate, sessions, publish, channel_logo
 tests/                  pytest — unitaires + intégration (mocks)
 ```

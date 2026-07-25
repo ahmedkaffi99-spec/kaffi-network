@@ -92,9 +92,16 @@ async def get_market_names() -> dict[str, dict]:
     return _market_names_cache
 
 
-async def get_fixtures(days_ahead: int = 2) -> list[dict]:
+async def get_fixtures(days_ahead: int = 45) -> list[dict]:
     """Fenêtre glissante depuis aujourd'hui 00h00 UTC — même format de date
-    (sans millisecondes) que tools/odds_api.py::_day_window_utc."""
+    (sans millisecondes) que tools/odds_api.py::_day_window_utc. 45 jours
+    par défaut (plutôt que les 2 jours du pipeline quotidien automatisé de
+    l'utilisateur, voir bet_agent/collecte_donnees.py) : ce module sert
+    aussi à l'analyse manuelle d'affiches prévues plusieurs semaines à
+    l'avance (voir agents/quant_analyst.py::analyze_named_fixture). Les
+    bookmakers ne publient pas forcément encore de cotes aussi loin à
+    l'avance pour autant — une fenêtre large ne garantit pas que la cote
+    existe déjà, juste qu'on ne la ratera pas si elle est publiée tôt."""
     global _fixtures_cache
     now = time.monotonic()
     if _fixtures_cache and now - _fixtures_cache[0] < FIXTURES_CACHE_TTL_SECONDS:

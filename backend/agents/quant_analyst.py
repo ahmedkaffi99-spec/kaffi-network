@@ -32,7 +32,16 @@ from quant.poisson_model import (
 )
 from quant.types import HistoricalMatch
 from quant.value_bet import ValueBet, build_value_bet, find_value_bets
-from tools.football_api import MatchAnalysisData, TeamMatchResult, TodayMatch, build_match_analysis_data, get_today_matches
+from tools import thesportsdb
+from tools.football_api import (
+    MatchAnalysisData,
+    TeamMatchResult,
+    TodayMatch,
+    build_match_analysis_data,
+    get_today_matches,
+)
+from tools.football_api import get_team_history as get_af_team_history
+from tools.football_api import search_team as search_af_team
 from tools.oddspapi import MARKET_TYPE_1X2
 from tools.oddspapi import get_bookmaker_price as get_oddspapi_price
 from tools.odds_api import PRIORITY_BOOKMAKER_KEY, get_bookmaker_quotes
@@ -183,22 +192,24 @@ async def _resolve_bookmaker_odds(home_team: str, away_team: str, market: str, s
     return median_price, spread_pct
 
 
-async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_book: EloRatingBook | None = None) -> list[ValueBet]:
-    """Analyse une affiche : force Poisson/Dixon-Coles des deux équipes,
-    buts attendus, simulation Monte Carlo (100 000 tirages), puis
-    comparaison de chaque probabilité de marché à la cote bookmaker
-    réellement disponible pour détecter les value bets."""
-    match = data.match
-    home_name, away_name = match.home_team.name, match.away_team.name
-
-    if len(data.home_team_last_matches) < MIN_HISTORY_FOR_STRENGTH or len(data.away_team_last_matches) < MIN_HISTORY_FOR_STRENGTH:
-        return []
-
-    home_strength, home_n = await _team_strength(home_name, match.competition, data.home_team_last_matches, league_avg_goals)
-    away_strength, away_n = await _team_strength(away_name, match.competition, data.away_team_last_matches, league_avg_goals)
+async def _analyze_teams(
+    home_name: str,
+    away_name: str,
+    competition: str,
+    match_datetime: str,
+    home_history: list[TeamMatchResult],
+    away_history: list[TeamMatchResult],
+    league_avg_goals: float,
+    elo_rating_gap: float | None,
+) -> list[ValueBet]:
+    """Cœur partagé entre analyze_fixture (historique déjà résolu via une
+    affiche API-Football du jour) et analyze_named_fixture (historique
+    résolu par nom, voir _resolve_team_history) : force Poisson/Dixon-Coles,
+    simulation Monte Carlo (100 000 tirages), puis comparaison de chaque
+    probabilité de marché à la cote bookmaker réellement disponible."""
+    home_strength, home_n = await _team_strength(home_name, competition, home_history, league_avg_goals)
+    away_strength, away_n = await _team_strength(away_name, competition, away_history, league_avg_goals)
     sample_size = min(home_n, away_n)
-
-    elo_rating_gap = elo_book.rating_gap(home_name, away_name) if elo_book is not None else None
 
     lam, mu = expected_goals(home_strength, away_strength, league_avg_goals)
     mc = simulate_match(lam, mu, DEFAULT_RHO, n_simulations=DEFAULT_N_SIMULATIONS)
@@ -214,8 +225,8 @@ async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_
             build_value_bet(
                 home_team=home_name,
                 away_team=away_name,
-                competition=match.competition,
-                match_datetime=match.datetime,
+                competition=competition,
+                match_datetime=match_datetime,
                 market=market,
                 selection=selection,
                 model_prob=model_prob,
@@ -230,14 +241,38 @@ async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_
     return value_bets
 
 
+async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_book: EloRatingBook | None = None) -> list[ValueBet]:
+    """Analyse une affiche déjà résolue par API-Football (voir
+    build_match_analysis_data) — nécessite que la découverte du jour
+    (get_today_matches) ait fonctionné, donc limité à la fenêtre de dates
+    autorisée par le plan API-Football (voir analyze_named_fixture pour
+    analyser une affiche à une date plus lointaine)."""
+    match = data.match
+    home_name, away_name = match.home_team.name, match.away_team.name
+
+    if len(data.home_team_last_matches) < MIN_HISTORY_FOR_STRENGTH or len(data.away_team_last_matches) < MIN_HISTORY_FOR_STRENGTH:
+        return []
+
+    elo_rating_gap = elo_book.rating_gap(home_name, away_name) if elo_book is not None else None
+
+    return await _analyze_teams(
+        home_name, away_name, match.competition, match.datetime,
+        data.home_team_last_matches, data.away_team_last_matches,
+        league_avg_goals, elo_rating_gap,
+    )
+
+
 async def analyze_fixtures(matches: list[TodayMatch]) -> list[ValueBet]:
-    """Analyse une liste précise d'affiches (pas nécessairement "tout le
-    calendrier du jour") — utilisé par run_quant_analysis ci-dessous, et
-    réutilisable directement (voir scripts/analyze_specific_matches.py) pour
-    forcer l'analyse d'un ensemble d'affiches choisi à la main plutôt que de
-    laisser API-Football décider quoi inclure. Respecte déjà le rate limit
-    7s/appel et le plafond MAX_MATCHES_TO_ANALYZE de
-    tools/football_api.py::build_match_analysis_data."""
+    """Analyse une liste précise d'affiches DÉJÀ CONNUES d'API-Football (pas
+    nécessairement "tout le calendrier du jour") — utilisé par
+    run_quant_analysis ci-dessous. Respecte déjà le rate limit 7s/appel et le
+    plafond MAX_MATCHES_TO_ANALYZE de
+    tools/football_api.py::build_match_analysis_data.
+
+    Limité à la fenêtre de dates que le plan API-Football autorise pour
+    `/fixtures?date=` (get_today_matches) — pour une affiche à une date plus
+    lointaine (ex: dans un mois), voir analyze_named_fixtures ci-dessous, qui
+    résout chaque équipe par nom plutôt que par date."""
     analysis_data = await build_match_analysis_data(matches)
     if not analysis_data:
         return []
@@ -263,3 +298,68 @@ async def run_quant_analysis(date: str | None = None) -> list[ValueBet]:
         return []
 
     return await analyze_fixtures(matches)
+
+
+async def _resolve_team_history(team_name: str, limit: int = 15) -> list[TeamMatchResult]:
+    """Historique récent d'une équipe résolu par NOM — pas par une affiche du
+    jour découverte via `/fixtures?date=` (restreint à une fenêtre proche
+    d'aujourd'hui par le plan gratuit API-Football, voir
+    tools/football_api.py::get_today_matches). API-Football en priorité
+    (historique complet, domicile/extérieur séparé, via search_team +
+    get_team_history), TheSportsDB en repli (tools/thesportsdb.py) si
+    l'équipe est introuvable ou le quota API-Football épuisé — jamais
+    d'exception non attrapée, une source indisponible ne bloque jamais
+    l'autre."""
+    try:
+        team_ref = await search_af_team(team_name)
+        if team_ref:
+            history = await get_af_team_history(team_ref.id, limit)
+            if history:
+                return history
+    except Exception as err:
+        print(f"[quant_analyst] API-Football indisponible pour {team_name} : {err}")
+
+    fallback = await thesportsdb.get_team_history(team_name, limit)
+    return fallback or []
+
+
+async def analyze_named_fixture(home_team: str, away_team: str, competition: str, match_datetime: str) -> list[ValueBet]:
+    """Analyse UNE affiche identifiée par nom d'équipe — pas besoin de la
+    découvrir via API-Football `/fixtures?date=` (voir _resolve_team_history),
+    donc utilisable pour n'importe quelle date, même dans plusieurs semaines/
+    mois. Voir scripts/analyze_specific_matches.py pour un exemple d'usage."""
+    home_history = await _resolve_team_history(home_team)
+    away_history = await _resolve_team_history(away_team)
+
+    if len(home_history) < MIN_HISTORY_FOR_STRENGTH or len(away_history) < MIN_HISTORY_FOR_STRENGTH:
+        print(
+            f"[quant_analyst] Historique insuffisant pour {home_team} vs {away_team} "
+            f"({len(home_history)}/{len(away_history)} matchs, minimum {MIN_HISTORY_FOR_STRENGTH}) — affiche ignorée."
+        )
+        return []
+
+    all_goals = [m.goals_for for m in (*home_history, *away_history)]
+    league_avg_goals = mean(all_goals) if all_goals else DEFAULT_LEAGUE_AVG_GOALS
+
+    elo_book = EloRatingBook()
+    elo_book.replay_history(
+        [*_team_history_to_matches(home_team, home_history), *_team_history_to_matches(away_team, away_history)]
+    )
+    elo_rating_gap = elo_book.rating_gap(home_team, away_team)
+
+    return await _analyze_teams(
+        home_team, away_team, competition, match_datetime,
+        home_history, away_history, league_avg_goals, elo_rating_gap,
+    )
+
+
+async def analyze_named_fixtures(fixtures: list[tuple[str, str, str, str]]) -> list[ValueBet]:
+    """fixtures : liste de (home_team, away_team, competition, match_datetime).
+    Point d'entrée pour scripts/analyze_specific_matches.py — découverte des
+    affiches indépendante de la fenêtre de dates d'API-Football (voir
+    analyze_named_fixture)."""
+    all_value_bets: list[ValueBet] = []
+    for home_team, away_team, competition, match_datetime in fixtures:
+        all_value_bets.extend(await analyze_named_fixture(home_team, away_team, competition, match_datetime))
+
+    return find_value_bets(all_value_bets, min_edge=MIN_EDGE)
