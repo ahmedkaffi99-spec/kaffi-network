@@ -8,6 +8,11 @@ apscheduler>=3.10
 Pillow>=10.4
 pydantic>=2.9
 numpy>=1.26
-scipy>=1.11
 beautifulsoup4>=4.12
 lxml>=5.0
+
+# scipy est optionnel : seul quant/poisson_model.py::fit_dixon_coles_mle
+# en a besoin (import différé dans la fonction), pas le chemin utilisé par
+# défaut (agents/quant_analyst.py). À installer seulement si besoin — peut
+# être pénible sur des environnements contraints (ex: Termux/Android).
+# scipy>=1.11

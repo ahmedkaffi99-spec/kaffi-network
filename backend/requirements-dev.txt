@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest>=8.0
 pytest-asyncio>=0.24
+# Nécessaire pour tests/test_poisson_model.py::fit_dixon_coles_mle (voir la
+# note dans requirements.txt — scipy n'est pas requis en usage normal).
+scipy>=1.11

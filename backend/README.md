@@ -35,15 +35,14 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ### Installation sur Termux (Android)
 
-`numpy`/`scipy`/`lxml`/`Pillow` ont du code natif (C/Fortran) — les laisser
-se compiler depuis zéro via `pip` sur un téléphone est lent et échoue
-souvent (pas de compilateur Fortran par défaut). Termux fournit ces
-paquets déjà compilés via `pkg` — les installer comme ça, PUIS le reste
-via `pip` :
+`numpy`/`lxml`/`Pillow` ont du code natif (C) — les laisser se compiler
+depuis zéro via `pip` sur un téléphone est lent et échoue parfois. Termux
+fournit ces paquets déjà compilés via `pkg` — les installer comme ça, PUIS
+le reste via `pip` :
 
 ```bash
 pkg update && pkg upgrade
-pkg install python git python-numpy python-scipy python-lxml python-pillow libjpeg-turbo
+pkg install python git python-numpy python-lxml python-pillow libjpeg-turbo
 
 git clone <url-du-repo>
 cd kaffi-network && git checkout claude/code-session-hzweq0
@@ -53,12 +52,21 @@ cd backend
 # ci-dessus au lieu de tenter de les recompiler dans le venv.
 python -m venv .venv --system-site-packages
 source .venv/bin/activate
-pip install fastapi "uvicorn[standard]" httpx python-dotenv python-multipart supabase apscheduler pydantic beautifulsoup4
+pip install fastapi "uvicorn[standard]" httpx python-dotenv python-multipart supabase apscheduler pydantic beautifulsoup4 numpy
 
 cp .env.example .env
 pkg install nano   # ou l'éditeur de ton choix
 nano .env          # remplis tes vraies clés
 ```
+
+**Ne PAS installer `scipy`** sur Termux (`pkg install python-scipy` échoue
+souvent — pas de wheel précompilé fiable pour toutes les combinaisons
+Python/Android, et compiler depuis zéro sans toolchain Fortran ne marche
+pas). Ce n'est pas grave : `scipy` n'est utile QUE pour l'ajustement
+Dixon-Coles avancé (`quant/poisson_model.py::fit_dixon_coles_mle`, pas
+encore branché dans le pipeline réel) — tout le reste (Elo, force
+attaque/défense simple, simulation Monte Carlo, détection de value bets,
+donc `scripts/analyze_specific_matches.py`) fonctionne sans scipy.
 
 Ensuite, mêmes commandes que d'habitude (`python scripts/analyze_specific_matches.py`,
 `uvicorn app:app ...`). Si `pip install` réessaie quand même de compiler

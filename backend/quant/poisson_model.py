@@ -23,12 +23,18 @@ selon les données réellement disponibles :
 Dans les deux cas, le résultat final (lambda_home, lambda_away) alimente
 quant/monte_carlo.py pour produire les probabilités de marché — jamais une
 conversion directe d'un ratio en probabilité.
+
+`scipy` n'est nécessaire QUE pour `fit_dixon_coles_mle` (import différé,
+à l'intérieur de la fonction) — le chemin réellement utilisé aujourd'hui
+(`estimate_team_strength_simple` + `score_matrix`) n'a besoin que de numpy.
+scipy peut être pénible à installer sur certains environnements contraints
+(ex: Termux/Android, sans toolchain Fortran) ; ne pas le rendre obligatoire
+pour ce qui n'en a pas besoin.
 """
+import math
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.optimize import minimize
-from scipy.stats import poisson
 
 from .types import HistoricalMatch
 
@@ -81,6 +87,24 @@ def blended_goals(actual_goals: int, xg: float | None, xg_weight: float = 0.5) -
     return xg_weight * xg + (1 - xg_weight) * actual_goals
 
 
+def _poisson_pmf(lam: float, max_k: int) -> np.ndarray:
+    """P(X=k) pour k=0..max_k, X ~ Poisson(lam) — implémentation directe en
+    log-espace (pas de dépendance scipy). Exact pour les petits k utilisés
+    ici (buts par match, max_k ~ 10), pas de souci de précision numérique."""
+    if lam <= 0:
+        pmf = np.zeros(max_k + 1)
+        pmf[0] = 1.0
+        return pmf
+
+    ks = np.arange(max_k + 1)
+    # log(k!) par somme cumulative de log(1..k) — évite d'appeler
+    # math.factorial (qui déborderait pour de grands k, non pertinent ici
+    # mais autant rester robuste).
+    log_factorial = np.concatenate(([0.0], np.cumsum(np.log(np.arange(1, max_k + 1)))))
+    log_pmf = ks * math.log(lam) - lam - log_factorial
+    return np.exp(log_pmf)
+
+
 def dixon_coles_tau(x: int, y: int, lam: float, mu: float, rho: float) -> float:
     """Correction de corrélation Dixon-Coles pour les scores faibles (0-0,
     1-0, 0-1, 1-1) — un Poisson bivarié indépendant sous-estime légèrement
@@ -100,8 +124,8 @@ def score_matrix(lam: float, mu: float, rho: float, max_goals: int = 10) -> np.n
     """Grille de probabilité jointe P(buts domicile=i, buts extérieur=j),
     corrigée Dixon-Coles et renormalisée (la correction tau peut légèrement
     déplacer la masse totale hors de 1 pour rho extrême)."""
-    home_pmf = poisson.pmf(np.arange(max_goals + 1), lam)
-    away_pmf = poisson.pmf(np.arange(max_goals + 1), mu)
+    home_pmf = _poisson_pmf(lam, max_goals)
+    away_pmf = _poisson_pmf(mu, max_goals)
     grid = np.outer(home_pmf, away_pmf)
 
     for i in range(2):
@@ -163,6 +187,13 @@ def expected_goals_from_model(model: DixonColesModel, home_team: str, away_team:
     return round(lam, 3), round(mu, 3)
 
 
+def _poisson_logpmf(k: np.ndarray, lam: np.ndarray) -> np.ndarray:
+    """log P(X=k) pour X ~ Poisson(lam), k et lam vectorisés (une valeur par
+    match) — même principe que `_poisson_pmf` mais sans grille 0..max_k
+    puisque les k observés (buts réels) ne sont pas forcément contigus."""
+    return k * np.log(lam) - lam - np.array([math.lgamma(ki + 1) for ki in k])
+
+
 def _neg_log_likelihood(params: np.ndarray, home_idx: np.ndarray, away_idx: np.ndarray, home_goals: np.ndarray, away_goals: np.ndarray, weights: np.ndarray, n_teams: int) -> float:
     attack = params[:n_teams]
     defense = params[n_teams : 2 * n_teams]
@@ -172,7 +203,7 @@ def _neg_log_likelihood(params: np.ndarray, home_idx: np.ndarray, away_idx: np.n
     lam = np.exp(attack[home_idx] + defense[away_idx] + home_adv)
     mu = np.exp(attack[away_idx] + defense[home_idx])
 
-    ll = weights * (poisson.logpmf(home_goals, lam) + poisson.logpmf(away_goals, mu))
+    ll = weights * (_poisson_logpmf(home_goals, lam) + _poisson_logpmf(away_goals, mu))
 
     # Correction Dixon-Coles — seuls les scores faibles (0-0/1-0/0-1/1-1)
     # sont affectés, calculée match par match (boucle Python volontaire :
@@ -193,7 +224,12 @@ def fit_dixon_coles_mle(matches: list[HistoricalMatch], xi: float = XI_TIME_DECA
     sur toutes les équipes de `matches`. Lève ValueError si l'échantillon
     est trop petit (< MIN_MATCHES_FOR_MLE) pour un ajustement statistiquement
     fiable — l'appelant doit alors utiliser estimate_team_strength_simple.
+
+    Nécessite scipy (import différé ici) — contrairement au reste de ce
+    module, qui n'a besoin que de numpy.
     """
+    from scipy.optimize import minimize
+
     if len(matches) < MIN_MATCHES_FOR_MLE:
         raise ValueError(f"Échantillon trop petit pour un ajustement Dixon-Coles fiable ({len(matches)} < {MIN_MATCHES_FOR_MLE}).")
 
