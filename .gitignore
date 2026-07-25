@@ -38,3 +38,10 @@ python/data/*.txt
 python/data/*.jpg
 python/data/*.jpeg
 python/data/*.png
+
+# Backend Python local (voir backend/README.md)
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/**/*.pyc

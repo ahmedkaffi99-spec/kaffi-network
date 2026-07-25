@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { proxyToBackend } from '@/lib/tools/backend-proxy'
 
 // Rejet manuel d'un palier 'draft' — remplace l'ancien verdict "revision_needed"
 // du Superviseur IA : c'est maintenant l'utilisateur qui juge le post et
@@ -14,13 +15,7 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
-  const { error } = await supabase
-    .from('pronostic_sessions')
-    .update({ status: 'rejected', notes: 'Rejeté manuellement depuis le dashboard.' })
-    .eq('id', id)
-    .eq('status', 'draft')
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  return NextResponse.json({ success: true })
+  const res = await proxyToBackend(`/api/sessions/${id}/reject`, { method: 'POST' })
+  const data = await res.json()
+  return NextResponse.json(data, { status: res.status })
 }

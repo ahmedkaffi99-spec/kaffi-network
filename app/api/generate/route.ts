@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { runPipeline } from '@/lib/orchestrator'
+import { proxyToBackend } from '@/lib/tools/backend-proxy'
 
 export const maxDuration = 300
 
+// Relaie vers le backend Python local (backend/routers/generate.py) — la
+// logique du pipeline (Planificateur → Analyste → Sélecteur de cotes →
+// Rédacteur → Superviseur) tourne désormais côté Python, voir
+// backend/orchestrator.py. Cette route ne fait plus que vérifier la
+// session utilisateur puis relayer.
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -13,12 +18,12 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}))
-  const date = typeof body?.date === 'string' ? body.date : undefined
-  // runId généré côté navigateur (voir components/DashboardClient.tsx) pour
-  // pouvoir démarrer le polling de la vue "live" avant même que ce run ne
-  // commence à poster des messages.
-  const runId = typeof body?.runId === 'string' ? body.runId : undefined
+  const res = await proxyToBackend('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 
-  const result = await runPipeline(date, runId)
-  return NextResponse.json(result, { status: result.success ? 200 : 422 })
+  const data = await res.json()
+  return NextResponse.json(data, { status: res.status })
 }
