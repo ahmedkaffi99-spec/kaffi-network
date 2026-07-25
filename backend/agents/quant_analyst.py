@@ -32,7 +32,7 @@ from quant.poisson_model import (
 )
 from quant.types import HistoricalMatch
 from quant.value_bet import ValueBet, build_value_bet, find_value_bets
-from tools.football_api import MatchAnalysisData, TeamMatchResult, build_match_analysis_data, get_today_matches
+from tools.football_api import MatchAnalysisData, TeamMatchResult, TodayMatch, build_match_analysis_data, get_today_matches
 from tools.odds_api import PRIORITY_BOOKMAKER_KEY, get_bookmaker_quotes
 from tools.understat import get_team_stats as get_understat_team_stats
 
@@ -200,22 +200,20 @@ async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_
     return value_bets
 
 
-async def run_quant_analysis(date: str | None = None) -> list[ValueBet]:
-    """Point d'entrée — matchs du jour, historique par équipe (réutilise
-    tools/football_api.py::build_match_analysis_data, donc respecte déjà le
-    rate limit 7s/appel et le plafond MAX_MATCHES_TO_ANALYZE), puis analyse
-    de chaque affiche. Renvoie les value bets triés par score de confiance
-    décroissant (quant/value_bet.py::find_value_bets)."""
-    matches = await get_today_matches(date)
-    if not matches:
-        return []
-
+async def analyze_fixtures(matches: list[TodayMatch]) -> list[ValueBet]:
+    """Analyse une liste précise d'affiches (pas nécessairement "tout le
+    calendrier du jour") — utilisé par run_quant_analysis ci-dessous, et
+    réutilisable directement (voir scripts/analyze_specific_matches.py) pour
+    forcer l'analyse d'un ensemble d'affiches choisi à la main plutôt que de
+    laisser API-Football décider quoi inclure. Respecte déjà le rate limit
+    7s/appel et le plafond MAX_MATCHES_TO_ANALYZE de
+    tools/football_api.py::build_match_analysis_data."""
     analysis_data = await build_match_analysis_data(matches)
     if not analysis_data:
         return []
 
     league_avg_goals = _league_avg_goals(analysis_data)
-    # Un seul book Elo partagé sur tout le run, construit une fois à partir
+    # Un seul book Elo partagé sur tout le lot, construit une fois à partir
     # de l'historique déjà collecté pour toutes les affiches analysées (pas
     # de nouvel appel API-Football supplémentaire).
     elo_book = _build_elo_book(analysis_data)
@@ -225,3 +223,13 @@ async def run_quant_analysis(date: str | None = None) -> list[ValueBet]:
         all_value_bets.extend(await analyze_fixture(data, league_avg_goals, elo_book))
 
     return find_value_bets(all_value_bets, min_edge=MIN_EDGE)
+
+
+async def run_quant_analysis(date: str | None = None) -> list[ValueBet]:
+    """Point d'entrée — tout le calendrier du jour (voir analyze_fixtures ci-
+    dessus pour analyser une liste précise d'affiches à la place)."""
+    matches = await get_today_matches(date)
+    if not matches:
+        return []
+
+    return await analyze_fixtures(matches)
