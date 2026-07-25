@@ -147,6 +147,13 @@ décrit plus haut :
   de clé API) pour xG/xGA/xPoints/PPDA/Deep Completions (Understat) et
   Progressive Passes/Carries + un proxy des "big chances" via les Actions
   Créatrices de Tir/But (FBref, qui ne publie pas la métrique Opta exacte).
+- **`tools/oddspapi.py`** — cotes bookmaker via [OddsPapi](https://oddspapi.io)
+  (`ODDSPAPI_KEY`), fournisseur alternatif à The Odds API (`tools/odds_api.py`)
+  couvrant beaucoup plus de marchés et de compétitions (basé sur un script de
+  collecte déjà validé en production par l'utilisateur). Utilisé en priorité
+  par `agents/quant_analyst.py::_resolve_bookmaker_odds` pour 1X2/BTTS/
+  Over-Under, avec repli automatique sur The Odds API si OddsPapi n'a pas la
+  sélection recherchée (ou si `ODDSPAPI_KEY` n'est pas configurée).
 
 **Portée actuelle** : marchés 1X2, BTTS, Over/Under uniquement (le "cœur
 statistique") — pas encore les ~18 marchés ni les 7 modèles ML évoqués dans
@@ -177,6 +184,20 @@ print(asyncio.run(get_league_team_stats('EPL')))
 "
 ```
 
+`tools/oddspapi.py` a la même limite (aucune vraie requête HTTP exécutée
+depuis ce sandbox), mais avec plus de confiance : son schéma vient
+directement d'un script de collecte déjà utilisé en production par
+l'utilisateur (`bet_agent/collecte_donnees.py`), pas d'une lecture de
+documentation seule. À valider :
+
+```bash
+python3 -c "
+import asyncio
+from tools.oddspapi import get_fixtures
+print(asyncio.run(get_fixtures()))
+"
+```
+
 ## Structure
 
 ```
@@ -189,9 +210,9 @@ supabase_client.py      Client Supabase service-role
 agent_kernel/           Framework générique multi-agents (blackboard, budget, mémoire)
 agents/                 planner, analyst, odds_selector, writer, supervisor, quant_analyst
 quant/                  elo, poisson_model, monte_carlo, value_bet (moteur quantitatif, voir plus haut)
-tools/                  football_api, odds_api, serper, telegram, image_generator,
-                        memory, quota_tracker, result_checker, duplicate_checker,
-                        display_format, understat, fbref
+tools/                  football_api, odds_api, oddspapi, serper, telegram,
+                        image_generator, memory, quota_tracker, result_checker,
+                        duplicate_checker, display_format, understat, fbref
 routers/                generate, sessions, publish, channel_logo
 tests/                  pytest — unitaires + intégration (mocks)
 ```

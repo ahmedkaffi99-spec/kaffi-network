@@ -33,6 +33,8 @@ from quant.poisson_model import (
 from quant.types import HistoricalMatch
 from quant.value_bet import ValueBet, build_value_bet, find_value_bets
 from tools.football_api import MatchAnalysisData, TeamMatchResult, TodayMatch, build_match_analysis_data, get_today_matches
+from tools.oddspapi import MARKET_TYPE_1X2
+from tools.oddspapi import get_bookmaker_price as get_oddspapi_price
 from tools.odds_api import PRIORITY_BOOKMAKER_KEY, get_bookmaker_quotes
 from tools.understat import get_team_stats as get_understat_team_stats
 
@@ -129,11 +131,39 @@ def _market_probabilities(mc) -> list[tuple[str, str, float]]:
     return probs
 
 
-async def _resolve_bookmaker_odds(home_team: str, away_team: str, selection: str) -> tuple[float, float | None] | None:
-    """(cote retenue, écart entre bookmakers en %) — même logique de
-    priorité que agents/odds_selector.py::_select_reliable_odds (1xBet en
-    priorité, sinon médiane), dupliquée ici en plus petit pour garder ce
-    module autonome et testable sans dépendre de l'agent heuristique."""
+def _oddspapi_query_for(market: str, selection: str) -> dict:
+    """Traduit un couple (marché, sélection) du vocabulaire du moteur (voir
+    _market_probabilities ci-dessus) vers les critères de recherche OddsPapi
+    (market_type/market_name, handicap, sélection). Renvoie {} pour un
+    marché non reconnu — l'appelant retombe alors directement sur The Odds
+    API."""
+    if market == "1X2":
+        selection_map = {"Victoire domicile": "1", "Match nul": "X", "Victoire extérieur": "2"}
+        return {"market_type": MARKET_TYPE_1X2, "selection": selection_map[selection]}
+    if market == "BTTS":
+        return {"market_name": "Both Teams To Score", "selection": "Yes" if selection == "BTTS Oui" else "No"}
+    if market == "Over/Under":
+        is_over = selection.startswith("Plus de")
+        line = float(selection.split(" ")[2])
+        return {"market_name": "Over Under Full Time", "handicap": line, "selection": "Over" if is_over else "Under"}
+    return {}
+
+
+async def _resolve_bookmaker_odds(home_team: str, away_team: str, market: str, selection: str) -> tuple[float, float | None] | None:
+    """(cote retenue, écart entre bookmakers en %) — OddsPapi en priorité
+    (plus riche, couvre beaucoup plus de matchs/marchés, voir
+    tools/oddspapi.py), repli sur The Odds API (tools/odds_api.py, même
+    logique de priorité que agents/odds_selector.py::_select_reliable_odds :
+    1xBet en priorité, sinon médiane) si OddsPapi n'a pas cette sélection.
+    OddsPapi ne renvoie ici qu'un seul bookmaker (1xBet) — pas d'écart entre
+    bookmakers calculable depuis cette source (spread_pct=None, traité comme
+    neutre par quant/value_bet.py::confidence_score)."""
+    oddspapi_query = _oddspapi_query_for(market, selection)
+    if oddspapi_query:
+        price = await get_oddspapi_price(home_team, away_team, **oddspapi_query)
+        if price is not None:
+            return price, None
+
     quotes = await get_bookmaker_quotes(home_team, away_team, selection)
     if not quotes:
         return None
@@ -175,7 +205,7 @@ async def analyze_fixture(data: MatchAnalysisData, league_avg_goals: float, elo_
 
     value_bets: list[ValueBet] = []
     for market, selection, model_prob in _market_probabilities(mc):
-        resolved = await _resolve_bookmaker_odds(home_name, away_name, selection)
+        resolved = await _resolve_bookmaker_odds(home_name, away_name, market, selection)
         if not resolved:
             continue
         odds, spread_pct = resolved

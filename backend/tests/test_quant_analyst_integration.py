@@ -60,10 +60,17 @@ def _patch_external_boundaries(monkeypatch):
             return [BookmakerQuote(bookmaker="1xbet", price=1.5)]
         return [BookmakerQuote(bookmaker="1xbet", price=1.9)]
 
+    async def fake_get_oddspapi_price(*_args, **_kwargs):
+        # Simule OddsPapi indisponible/sans cette sélection — force le repli
+        # sur The Odds API (fake_get_bookmaker_quotes ci-dessus), même
+        # scénario que le mode de repli réel (voir _resolve_bookmaker_odds).
+        return None
+
     monkeypatch.setattr(quant_analyst, "get_today_matches", fake_get_today_matches)
     monkeypatch.setattr(quant_analyst, "build_match_analysis_data", fake_build_match_analysis_data)
     monkeypatch.setattr(quant_analyst, "get_understat_team_stats", fake_get_understat_team_stats)
     monkeypatch.setattr(quant_analyst, "get_bookmaker_quotes", fake_get_bookmaker_quotes)
+    monkeypatch.setattr(quant_analyst, "get_oddspapi_price", fake_get_oddspapi_price)
 
 
 @pytest.mark.asyncio
@@ -94,3 +101,25 @@ async def test_run_quant_analysis_no_matches_returns_empty(monkeypatch):
     monkeypatch.setattr(quant_analyst, "get_today_matches", fake_no_matches)
     result = await quant_analyst.run_quant_analysis(date="2026-08-01")
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_oddspapi_price_takes_priority_over_the_odds_api(monkeypatch):
+    """Quand OddsPapi a une cote pour la sélection, elle doit être utilisée
+    (et sans écart entre bookmakers, puisqu'une seule source) plutôt que
+    The Odds API — voir _resolve_bookmaker_odds."""
+
+    async def fake_get_oddspapi_price(_home, _away, **_kwargs):
+        return 3.0  # cote distincte de celle de The Odds API (2.5), pour distinguer les deux sources
+
+    async def fake_get_bookmaker_quotes_should_not_be_used(*_args, **_kwargs):
+        raise AssertionError("The Odds API ne devrait pas être appelé quand OddsPapi répond déjà")
+
+    monkeypatch.setattr(quant_analyst, "get_oddspapi_price", fake_get_oddspapi_price)
+    monkeypatch.setattr(quant_analyst, "get_bookmaker_quotes", fake_get_bookmaker_quotes_should_not_be_used)
+
+    value_bets = await quant_analyst.run_quant_analysis(date="2026-08-01")
+    home_win_bets = [vb for vb in value_bets if vb.selection == "Victoire domicile"]
+    assert home_win_bets
+    assert home_win_bets[0].bookmaker_odds == 3.0
+    assert home_win_bets[0].bookmaker_spread_pct is None
