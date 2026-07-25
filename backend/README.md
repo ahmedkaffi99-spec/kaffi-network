@@ -73,6 +73,70 @@ réelles en place dans `.env`, lance un vrai `POST /api/generate` (depuis le
 dashboard, bouton "Générer") et compare le résultat à une session connue
 du site actuel avant de considérer la bascule terminée.
 
+## Moteur quantitatif (`quant/` + `agents/quant_analyst.py`)
+
+Un second moteur de pronostic, entièrement déterministe (aucun appel LLM),
+construit à côté du pipeline "IA conversationnelle" (planner/analyst/writer)
+décrit plus haut :
+
+- **`quant/elo.py`** — ratings Elo (système "World Football Elo Ratings" :
+  avantage terrain, K-factor, multiplicateur d'écart de buts). Sert de
+  signal informatif (écart de rating affiché sur chaque value bet), pas
+  d'entrée dans le calcul de probabilité de marché.
+- **`quant/poisson_model.py`** — modèle de buts Poisson + correction
+  Dixon-Coles (1997) pour les scores faibles. Deux méthodes d'estimation de
+  la force attaque/défense d'une équipe :
+  - `estimate_team_strength_simple` — ratio à la moyenne de ligue, à partir
+    du seul historique récent d'UNE équipe (~15 derniers matchs, mélangés
+    aux xG Understat via `blended_goals` quand disponibles). C'est la
+    méthode **réellement utilisée** par `agents/quant_analyst.py`
+    aujourd'hui, parce que la collecte actuelle (`tools/football_api.py`)
+    ne rassemble pas un historique croisé sur tout un championnat.
+  - `fit_dixon_coles_mle` — l'ajustement Dixon-Coles complet par maximum de
+    vraisemblance, statistiquement plus rigoureux mais qui a besoin d'un
+    gros jeu de données joint entre équipes (≥ 100 matchs, voir
+    `MIN_MATCHES_FOR_MLE`). Disponible et testé, mais pas encore branché
+    faute d'une collecte de données à cette échelle.
+- **`quant/monte_carlo.py`** — 100 000 tirages de score à partir de la
+  distribution Dixon-Coles, pour produire les probabilités 1X2, BTTS,
+  Over/Under et les scores exacts les plus probables.
+- **`quant/value_bet.py`** — Edge, Expected Value, Kelly Criterion
+  (fractionnaire, plafonné), score de confiance sur 100 et classement par
+  étoiles (★ à ★★★★★).
+- **`tools/understat.py`** / **`tools/fbref.py`** — scraping gratuit (pas
+  de clé API) pour xG/xGA/xPoints/PPDA/Deep Completions (Understat) et
+  Progressive Passes/Carries + un proxy des "big chances" via les Actions
+  Créatrices de Tir/But (FBref, qui ne publie pas la métrique Opta exacte).
+
+**Portée actuelle** : marchés 1X2, BTTS, Over/Under uniquement (le "cœur
+statistique") — pas encore les ~18 marchés ni les 7 modèles ML évoqués dans
+le prompt maître d'origine, ni un tableau de bord dédié. Ce sont des
+extensions possibles, pas encore construites.
+
+**Point d'entrée** : `agents/quant_analyst.py::run_quant_analysis(date) ->
+list[ValueBet]`. **Pas câblé dans `orchestrator.py` par défaut** —
+c'est un module autonome, testable et utilisable indépendamment. Le brancher
+à la place (ou en complément) de `agents/analyst.py` dans le pipeline de
+production réelle (qui alimente un vrai canal Telegram) est une décision à
+prendre après avoir comparé ses sorties à des value bets connus, pas un
+changement à faire à l'aveugle.
+
+**Non testé en conditions réelles** : les scrapers Understat/FBref n'ont
+pas pu être validés contre les vrais sites depuis l'environnement de
+développement (accès réseau restreint dans ce sandbox) — leur logique de
+parsing est testée contre des pages HTML factices reproduisant fidèlement
+la structure documentée des deux sites (voir `tests/test_understat.py`,
+`tests/test_fbref.py`), mais une vraie requête HTTP n'a jamais été
+exécutée. À valider en premier une fois en local :
+
+```bash
+python3 -c "
+import asyncio
+from tools.understat import get_league_team_stats
+print(asyncio.run(get_league_team_stats('EPL')))
+"
+```
+
 ## Structure
 
 ```
@@ -83,10 +147,11 @@ model_router.py         Routage OpenRouter/Groq (port de lib/model-router.ts)
 local_auth.py           Vérification du secret partagé (X-Local-Secret)
 supabase_client.py      Client Supabase service-role
 agent_kernel/           Framework générique multi-agents (blackboard, budget, mémoire)
-agents/                 planner, analyst, odds_selector, writer, supervisor
+agents/                 planner, analyst, odds_selector, writer, supervisor, quant_analyst
+quant/                  elo, poisson_model, monte_carlo, value_bet (moteur quantitatif, voir plus haut)
 tools/                  football_api, odds_api, serper, telegram, image_generator,
                         memory, quota_tracker, result_checker, duplicate_checker,
-                        display_format
+                        display_format, understat, fbref
 routers/                generate, sessions, publish, channel_logo
 tests/                  pytest — unitaires + intégration (mocks)
 ```
