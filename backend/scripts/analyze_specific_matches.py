@@ -20,10 +20,18 @@ tolère les variantes courantes via tools/odds_api.py::team_similarity, mais
 pas une faute totale).
 """
 import asyncio
+import sys
+from pathlib import Path
 
-from agents.quant_analyst import analyze_fixtures
-from tools.football_api import get_today_matches
-from tools.odds_api import team_similarity
+# Permet de lancer ce script directement (`python scripts/analyze_specific_matches.py`)
+# depuis n'importe quel dossier courant — sans ça, Python met seulement
+# scripts/ sur sys.path (pas backend/), et les imports ci-dessous échouent
+# avec ModuleNotFoundError: No module named 'agents'.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from agents.quant_analyst import analyze_fixtures  # noqa: E402
+from tools.football_api import get_today_matches  # noqa: E402
+from tools.odds_api import team_similarity  # noqa: E402
 
 # (domicile, extérieur, date YYYY-MM-DD) — une seule confirmée pour l'instant
 # (Frosinone Calcio vs Juventus, Serie A, 23.08.2026 19h30, vu sur ta
