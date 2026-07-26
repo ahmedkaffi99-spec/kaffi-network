@@ -178,6 +178,18 @@ extensions possibles, pas encore construites.
   introuvable sur API-Football ou son quota épuisé. C'est le point d'entrée
   utilisé par `scripts/analyze_specific_matches.py` pour analyser des
   affiches à venir dans plusieurs semaines/mois.
+- `agents/quant_analyst.py::analyze_named_fixtures_detailed(fixtures) ->
+  tuple[list[ValueBet], list[FixtureDiagnostics]]` — même chose que
+  `analyze_named_fixtures`, mais renvoie en plus, pour chaque affiche, les
+  5 derniers matchs de chaque équipe et leurs 5 dernières confrontations
+  directes (`tools/football_api.py::get_head_to_head`, uniquement quand les
+  deux équipes ont été résolues via API-Football — pas de head-to-head
+  disponible pour une équipe résolue seulement via TheSportsDB). Sert à
+  vérifier visuellement les données brutes derrière le calcul avant de lui
+  faire confiance — c'est ce qu'affiche `scripts/analyze_specific_matches.py`.
+  Coût : 1 requête API-Football supplémentaire par affiche (le
+  head-to-head), en plus des 2 par équipe déjà nécessaires pour l'historique
+  — toujours espacées de `RATE_LIMIT_SLEEP` (7s).
 
 **Pas câblé dans `orchestrator.py` par défaut** — c'est un module autonome,
 testable et utilisable indépendamment. Le brancher à la place (ou en

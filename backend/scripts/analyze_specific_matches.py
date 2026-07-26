@@ -31,7 +31,7 @@ from pathlib import Path
 # avec ModuleNotFoundError: No module named 'agents'.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agents.quant_analyst import analyze_named_fixtures  # noqa: E402
+from agents.quant_analyst import FixtureDiagnostics, analyze_named_fixtures_detailed  # noqa: E402
 
 # (domicile, extérieur, compétition, date) — la compétition sert à
 # interroger Understat/FBref (tools/understat.py, tools/fbref.py) pour les
@@ -54,15 +54,47 @@ TARGET_FIXTURES: list[tuple[str, str, str, str]] = [
 ]
 
 
+def _print_team_history(team_name: str, matches) -> None:
+    if not matches:
+        print(f"  {team_name} : historique indisponible.")
+        return
+    print(f"  {team_name} — {len(matches)} dernier(s) match(s) :")
+    for m in matches:
+        lieu = "dom." if m.home else "ext."
+        print(f"    {m.date[:10]} ({lieu}) vs {m.opponent} — {m.goals_for}-{m.goals_against} ({m.result})")
+
+
+def _print_h2h(diagnostics: FixtureDiagnostics) -> None:
+    if not diagnostics.h2h_last_5:
+        print("  Head-to-head : indisponible (au moins une équipe non résolue via API-Football).")
+        return
+    print(f"  Head-to-head — {len(diagnostics.h2h_last_5)} dernière(s) confrontation(s) directe(s) :")
+    for h in diagnostics.h2h_last_5:
+        print(f"    {h.date[:10]} : {h.home_team} {h.home_goals}-{h.away_goals} {h.away_team}")
+
+
 async def main() -> None:
     print(f"Analyse de {len(TARGET_FIXTURES)} affiches (résolution par nom, indépendante du calendrier API-Football)...\n")
 
-    value_bets = await analyze_named_fixtures(TARGET_FIXTURES)
+    value_bets, diagnostics_list = await analyze_named_fixtures_detailed(TARGET_FIXTURES)
+
+    print("=" * 70)
+    print("DONNÉES BRUTES — 20 équipes une par une (5 derniers matchs + H2H)")
+    print("=" * 70)
+    for diagnostics in diagnostics_list:
+        print(f"\n{diagnostics.home_team} vs {diagnostics.away_team}")
+        _print_team_history(diagnostics.home_team, diagnostics.home_last_5)
+        _print_team_history(diagnostics.away_team, diagnostics.away_last_5)
+        _print_h2h(diagnostics)
+    print()
 
     if not value_bets:
         print("Aucun value bet détecté — soit edge insuffisant partout, soit historique/cotes indisponibles pour ces équipes.")
         return
 
+    print("=" * 70)
+    print("VALUE BETS")
+    print("=" * 70)
     for vb in value_bets:
         stars = "★" * vb.star_count
         print(f"{stars} {vb.star_label} — {vb.home_team} vs {vb.away_team} ({vb.competition})")

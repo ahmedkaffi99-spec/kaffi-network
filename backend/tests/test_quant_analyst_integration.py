@@ -7,7 +7,7 @@ import pytest
 
 import agents.quant_analyst as quant_analyst
 from quant.value_bet import ValueBet
-from tools.football_api import MatchAnalysisData, TeamMatchResult, TeamRef, TodayMatch
+from tools.football_api import H2HMatch, MatchAnalysisData, TeamMatchResult, TeamRef, TodayMatch
 from tools.odds_api import BookmakerQuote
 
 
@@ -152,8 +152,12 @@ async def test_analyze_named_fixture_uses_api_football_when_available(monkeypatc
     async def fake_get_af_team_history(team_id, _limit=15):
         return strong_history if team_id == 1 else weak_history
 
+    async def fake_get_af_head_to_head(_team1_id, _team2_id, limit=5):
+        return []
+
     monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
     monkeypatch.setattr(quant_analyst, "get_af_team_history", fake_get_af_team_history)
+    monkeypatch.setattr(quant_analyst, "get_af_head_to_head", fake_get_af_head_to_head)
     monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
 
     value_bets = await quant_analyst.analyze_named_fixture("StrongFC", "WeakFC", "Premier League", "date non confirmée")
@@ -223,3 +227,96 @@ async def test_analyze_named_fixtures_aggregates_and_sorts(monkeypatch):
     assert len(value_bets) > 0
     confidences = [vb.confidence for vb in value_bets]
     assert confidences == sorted(confidences, reverse=True)
+
+
+# ============================================================
+# analyze_named_fixture_detailed / analyze_named_fixtures_detailed —
+# FixtureDiagnostics (5 derniers matchs par équipe + head-to-head).
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixture_detailed_fetches_h2h_when_both_teams_resolved(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_search_af_team(name):
+        return TeamRef(id=1, name=name, logo="") if name == "StrongFC" else TeamRef(id=2, name=name, logo="")
+
+    async def fake_get_af_team_history(team_id, _limit=15):
+        return strong_history if team_id == 1 else weak_history
+
+    h2h_calls = []
+
+    async def fake_get_af_head_to_head(team1_id, team2_id, limit=5):
+        h2h_calls.append((team1_id, team2_id, limit))
+        return [
+            H2HMatch(date="2023-01-01T00:00:00Z", home_team="StrongFC", away_team="WeakFC", home_goals=2, away_goals=0)
+        ]
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst, "get_af_team_history", fake_get_af_team_history)
+    monkeypatch.setattr(quant_analyst, "get_af_head_to_head", fake_get_af_head_to_head)
+
+    value_bets, diagnostics = await quant_analyst.analyze_named_fixture_detailed(
+        "StrongFC", "WeakFC", "Premier League", "date non confirmée"
+    )
+
+    assert value_bets  # historique suffisant, edge attendu comme dans les autres tests
+    assert h2h_calls == [(1, 2, 5)]
+    assert len(diagnostics.h2h_last_5) == 1
+    assert len(diagnostics.home_last_5) == 5  # tronqué à 5 même si l'historique complet en a plus
+    assert len(diagnostics.away_last_5) == 5
+    assert diagnostics.home_team == "StrongFC"
+    assert diagnostics.away_team == "WeakFC"
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixture_detailed_skips_h2h_when_thesportsdb_fallback(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_search_af_team(_name):
+        return None  # API-Football indisponible pour les deux équipes
+
+    async def fake_thesportsdb_get_team_history(name, _limit=15):
+        return strong_history if name == "StrongFC" else weak_history
+
+    async def fake_get_af_head_to_head(*_args, **_kwargs):
+        raise AssertionError("get_head_to_head ne devrait pas être appelé sans TeamRef API-Football des deux côtés")
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+    monkeypatch.setattr(quant_analyst, "get_af_head_to_head", fake_get_af_head_to_head)
+
+    _value_bets, diagnostics = await quant_analyst.analyze_named_fixture_detailed(
+        "StrongFC", "WeakFC", "Premier League", "date non confirmée"
+    )
+
+    assert diagnostics.h2h_last_5 == []
+
+
+@pytest.mark.asyncio
+async def test_analyze_named_fixtures_detailed_returns_one_diagnostics_per_fixture(monkeypatch):
+    strong_history = _history([3, 2, 3, 2, 3, 2], [0, 1, 0, 1, 0, 1], opponent="Various")
+    weak_history = _history([0, 1, 0, 1, 0, 1], [3, 2, 3, 2, 3, 2], opponent="Various")
+
+    async def fake_search_af_team(_name):
+        return None
+
+    async def fake_thesportsdb_get_team_history(name, _limit=15):
+        return strong_history if name == "StrongFC" else weak_history
+
+    monkeypatch.setattr(quant_analyst, "search_af_team", fake_search_af_team)
+    monkeypatch.setattr(quant_analyst.thesportsdb, "get_team_history", fake_thesportsdb_get_team_history)
+
+    value_bets, diagnostics_list = await quant_analyst.analyze_named_fixtures_detailed(
+        [
+            ("StrongFC", "WeakFC", "Premier League", "date non confirmée"),
+            ("StrongFC", "WeakFC", "Ligue 1", "date non confirmée"),
+        ]
+    )
+
+    assert len(value_bets) > 0
+    assert len(diagnostics_list) == 2
+    assert all(d.home_team == "StrongFC" and d.away_team == "WeakFC" for d in diagnostics_list)

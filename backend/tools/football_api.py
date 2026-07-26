@@ -54,6 +54,15 @@ class MatchAnalysisData:
     away_team_last_matches: list[TeamMatchResult] = field(default_factory=list)
 
 
+@dataclass
+class H2HMatch:
+    date: str
+    home_team: str
+    away_team: str
+    home_goals: int
+    away_goals: int
+
+
 async def _api_request(path: str) -> dict:
     api_key = os.environ.get("API_FOOTBALL_KEY")
     if not api_key:
@@ -169,6 +178,31 @@ async def get_team_history(team_id: int, limit: int = 15) -> list[TeamMatchResul
     finished = [e for e in data.get("response", []) if e["fixture"]["status"]["short"] in FINISHED_STATUSES]
     finished.sort(key=lambda e: e["fixture"]["date"], reverse=True)
     return [_map_fixture_to_team_match_result(e, team_id) for e in finished[:limit]]
+
+
+async def get_head_to_head(team1_id: int, team2_id: int, limit: int = 5) -> list[H2HMatch]:
+    """Dernières confrontations directes entre deux équipes via
+    `/fixtures/headtohead` — comme get_team_history, restreint par SAISON
+    (pas par la date réelle d'aujourd'hui), donc utilisable pour préparer
+    l'analyse d'une affiche à venir dans plusieurs semaines/mois. Nécessite
+    les deux IDs déjà résolus (voir search_team) — pas de nouvelle recherche
+    par nom ici, pour ne pas gaspiller de requêtes déjà comptées ailleurs."""
+    await asyncio.sleep(RATE_LIMIT_SLEEP)
+    data = await _track_request(f"/fixtures/headtohead?h2h={team1_id}-{team2_id}&last={limit}", 1)
+
+    finished = [e for e in data.get("response", []) if e["fixture"]["status"]["short"] in FINISHED_STATUSES]
+    finished.sort(key=lambda e: e["fixture"]["date"], reverse=True)
+
+    return [
+        H2HMatch(
+            date=e["fixture"]["date"],
+            home_team=e["teams"]["home"]["name"],
+            away_team=e["teams"]["away"]["name"],
+            home_goals=e["goals"]["home"],
+            away_goals=e["goals"]["away"],
+        )
+        for e in finished[:limit]
+    ]
 
 
 async def build_match_analysis_data(matches: list[TodayMatch], history_limit: int = 15) -> list[MatchAnalysisData]:

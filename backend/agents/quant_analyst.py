@@ -18,6 +18,7 @@ championnat (quant/poisson_model.py::fit_dixon_coles_mle existe pour ce cas
 mais a besoin d'un jeu de données bien plus large que ce que la collecte
 actuelle rassemble par run).
 """
+from dataclasses import dataclass
 from statistics import mean
 
 from quant.elo import EloRatingBook
@@ -34,12 +35,15 @@ from quant.types import HistoricalMatch
 from quant.value_bet import ValueBet, build_value_bet, find_value_bets
 from tools import thesportsdb
 from tools.football_api import (
+    H2HMatch,
     MatchAnalysisData,
     TeamMatchResult,
+    TeamRef,
     TodayMatch,
     build_match_analysis_data,
     get_today_matches,
 )
+from tools.football_api import get_head_to_head as get_af_head_to_head
 from tools.football_api import get_team_history as get_af_team_history
 from tools.football_api import search_team as search_af_team
 from tools.oddspapi import MARKET_TYPE_1X2
@@ -300,7 +304,7 @@ async def run_quant_analysis(date: str | None = None) -> list[ValueBet]:
     return await analyze_fixtures(matches)
 
 
-async def _resolve_team_history(team_name: str, limit: int = 15) -> list[TeamMatchResult]:
+async def _resolve_team_history(team_name: str, limit: int = 15) -> tuple[list[TeamMatchResult], TeamRef | None]:
     """Historique récent d'une équipe résolu par NOM — pas par une affiche du
     jour découverte via `/fixtures?date=` (restreint à une fenêtre proche
     d'aujourd'hui par le plan gratuit API-Football, voir
@@ -309,34 +313,69 @@ async def _resolve_team_history(team_name: str, limit: int = 15) -> list[TeamMat
     get_team_history), TheSportsDB en repli (tools/thesportsdb.py) si
     l'équipe est introuvable ou le quota API-Football épuisé — jamais
     d'exception non attrapée, une source indisponible ne bloque jamais
-    l'autre."""
+    l'autre.
+
+    Renvoie aussi le TeamRef résolu par API-Football (None si seul
+    TheSportsDB a répondu, ou si aucune source n'a l'équipe) — permet à
+    l'appelant de réutiliser cet ID pour le head-to-head (get_head_to_head)
+    sans refaire un search_team, qui coûterait une requête rate-limitée
+    supplémentaire pour rien."""
     try:
         team_ref = await search_af_team(team_name)
         if team_ref:
             history = await get_af_team_history(team_ref.id, limit)
             if history:
-                return history
+                return history, team_ref
     except Exception as err:
         print(f"[quant_analyst] API-Football indisponible pour {team_name} : {err}")
 
     fallback = await thesportsdb.get_team_history(team_name, limit)
-    return fallback or []
+    return fallback or [], None
 
 
-async def analyze_named_fixture(home_team: str, away_team: str, competition: str, match_datetime: str) -> list[ValueBet]:
-    """Analyse UNE affiche identifiée par nom d'équipe — pas besoin de la
-    découvrir via API-Football `/fixtures?date=` (voir _resolve_team_history),
-    donc utilisable pour n'importe quelle date, même dans plusieurs semaines/
-    mois. Voir scripts/analyze_specific_matches.py pour un exemple d'usage."""
-    home_history = await _resolve_team_history(home_team)
-    away_history = await _resolve_team_history(away_team)
+@dataclass
+class FixtureDiagnostics:
+    """Données brutes derrière le calcul d'une affiche — les 5 derniers
+    matchs de chaque équipe et leurs 5 dernières confrontations directes —
+    pour que l'utilisateur puisse vérifier visuellement la donnée avant de
+    faire confiance au résultat (voir scripts/analyze_specific_matches.py)."""
+    home_team: str
+    away_team: str
+    home_last_5: list[TeamMatchResult]
+    away_last_5: list[TeamMatchResult]
+    h2h_last_5: list[H2HMatch]
+
+
+async def analyze_named_fixture_detailed(
+    home_team: str, away_team: str, competition: str, match_datetime: str
+) -> tuple[list[ValueBet], FixtureDiagnostics]:
+    """Comme analyze_named_fixture, mais renvoie aussi les données brutes
+    (FixtureDiagnostics) utilisées pour le calcul — voir
+    scripts/analyze_specific_matches.py pour l'affichage détaillé."""
+    home_history, home_ref = await _resolve_team_history(home_team)
+    away_history, away_ref = await _resolve_team_history(away_team)
+
+    h2h: list[H2HMatch] = []
+    if home_ref is not None and away_ref is not None:
+        try:
+            h2h = await get_af_head_to_head(home_ref.id, away_ref.id, limit=5)
+        except Exception as err:
+            print(f"[quant_analyst] Head-to-head indisponible pour {home_team} vs {away_team} : {err}")
+
+    diagnostics = FixtureDiagnostics(
+        home_team=home_team,
+        away_team=away_team,
+        home_last_5=home_history[:5],
+        away_last_5=away_history[:5],
+        h2h_last_5=h2h,
+    )
 
     if len(home_history) < MIN_HISTORY_FOR_STRENGTH or len(away_history) < MIN_HISTORY_FOR_STRENGTH:
         print(
             f"[quant_analyst] Historique insuffisant pour {home_team} vs {away_team} "
             f"({len(home_history)}/{len(away_history)} matchs, minimum {MIN_HISTORY_FOR_STRENGTH}) — affiche ignorée."
         )
-        return []
+        return [], diagnostics
 
     all_goals = [m.goals_for for m in (*home_history, *away_history)]
     league_avg_goals = mean(all_goals) if all_goals else DEFAULT_LEAGUE_AVG_GOALS
@@ -347,10 +386,20 @@ async def analyze_named_fixture(home_team: str, away_team: str, competition: str
     )
     elo_rating_gap = elo_book.rating_gap(home_team, away_team)
 
-    return await _analyze_teams(
+    value_bets = await _analyze_teams(
         home_team, away_team, competition, match_datetime,
         home_history, away_history, league_avg_goals, elo_rating_gap,
     )
+    return value_bets, diagnostics
+
+
+async def analyze_named_fixture(home_team: str, away_team: str, competition: str, match_datetime: str) -> list[ValueBet]:
+    """Analyse UNE affiche identifiée par nom d'équipe — pas besoin de la
+    découvrir via API-Football `/fixtures?date=` (voir _resolve_team_history),
+    donc utilisable pour n'importe quelle date, même dans plusieurs semaines/
+    mois. Voir scripts/analyze_specific_matches.py pour un exemple d'usage."""
+    value_bets, _diagnostics = await analyze_named_fixture_detailed(home_team, away_team, competition, match_datetime)
+    return value_bets
 
 
 async def analyze_named_fixtures(fixtures: list[tuple[str, str, str, str]]) -> list[ValueBet]:
@@ -363,3 +412,20 @@ async def analyze_named_fixtures(fixtures: list[tuple[str, str, str, str]]) -> l
         all_value_bets.extend(await analyze_named_fixture(home_team, away_team, competition, match_datetime))
 
     return find_value_bets(all_value_bets, min_edge=MIN_EDGE)
+
+
+async def analyze_named_fixtures_detailed(
+    fixtures: list[tuple[str, str, str, str]]
+) -> tuple[list[ValueBet], list[FixtureDiagnostics]]:
+    """Comme analyze_named_fixtures, mais renvoie aussi la liste des
+    FixtureDiagnostics (une par affiche, même ordre) — voir
+    scripts/analyze_specific_matches.py pour l'affichage "20 équipes une par
+    une, 5 derniers matchs + head-to-head"."""
+    all_value_bets: list[ValueBet] = []
+    all_diagnostics: list[FixtureDiagnostics] = []
+    for home_team, away_team, competition, match_datetime in fixtures:
+        value_bets, diagnostics = await analyze_named_fixture_detailed(home_team, away_team, competition, match_datetime)
+        all_value_bets.extend(value_bets)
+        all_diagnostics.append(diagnostics)
+
+    return find_value_bets(all_value_bets, min_edge=MIN_EDGE), all_diagnostics

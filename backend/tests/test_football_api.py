@@ -118,3 +118,46 @@ async def test_get_team_history_respects_limit(monkeypatch):
 
     history = await football_api.get_team_history(541, limit=1)
     assert len(history) == 1
+
+
+FAKE_HEAD_TO_HEAD_RESPONSE = {
+    "response": [
+        {
+            "fixture": {"id": 10, "date": "2023-10-01T20:00:00+00:00", "status": {"short": "FT"}},
+            "teams": {"home": {"id": 541, "name": "Real Madrid"}, "away": {"id": 998, "name": "Barcelona"}},
+            "goals": {"home": 2, "away": 1},
+        },
+        {
+            "fixture": {"id": 11, "date": "2024-04-20T20:00:00+00:00", "status": {"short": "FT"}},
+            "teams": {"home": {"id": 998, "name": "Barcelona"}, "away": {"id": 541, "name": "Real Madrid"}},
+            "goals": {"home": 2, "away": 2},
+        },
+        {
+            # Pas encore joué — doit être filtré (hors FINISHED_STATUSES).
+            "fixture": {"id": 12, "date": "2026-08-23T20:00:00+00:00", "status": {"short": "NS"}},
+            "teams": {"home": {"id": 541, "name": "Real Madrid"}, "away": {"id": 998, "name": "Barcelona"}},
+            "goals": {"home": None, "away": None},
+        },
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_get_head_to_head_filters_unfinished_and_sorts_most_recent_first(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse(FAKE_HEAD_TO_HEAD_RESPONSE)))
+
+    h2h = await football_api.get_head_to_head(541, 998, limit=5)
+
+    assert len(h2h) == 2  # le match "NS" est exclu
+    assert h2h[0].date == "2024-04-20T20:00:00+00:00"  # le plus récent en premier
+    assert h2h[0].home_team == "Barcelona"
+    assert h2h[0].away_goals == 2
+    assert h2h[1].date == "2023-10-01T20:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_get_head_to_head_respects_limit(monkeypatch):
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: _FakeAsyncClient(_FakeResponse(FAKE_HEAD_TO_HEAD_RESPONSE)))
+
+    h2h = await football_api.get_head_to_head(541, 998, limit=1)
+    assert len(h2h) == 1
