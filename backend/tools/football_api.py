@@ -131,7 +131,14 @@ async def search_team(name: str) -> TeamRef | None:
     contrairement à `/fixtures?date=`, cet endpoint n'est PAS restreint à une
     fenêtre de dates proche d'aujourd'hui (juste une recherche par nom),
     donc utilisable pour préparer l'analyse d'une affiche à n'importe quelle
-    date, même lointaine."""
+    date, même lointaine.
+
+    Respecte le même espacement que get_team_history (RATE_LIMIT_SLEEP) —
+    sans ça, un appel search_team juste après un get_team_history (rythme
+    réel d'agents/quant_analyst.py::_resolve_team_history) tombe pile dans
+    la même fenêtre d'une minute et dépasse la limite de 10 req/min du plan
+    gratuit, provoquant des échecs en cascade sur les équipes suivantes."""
+    await asyncio.sleep(RATE_LIMIT_SLEEP)
     data = await _track_request(f"/teams?search={name}", 1)
     entries = data.get("response", [])
     if not entries:
