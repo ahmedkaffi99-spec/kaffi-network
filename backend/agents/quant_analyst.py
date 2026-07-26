@@ -319,17 +319,29 @@ async def _resolve_team_history(team_name: str, limit: int = 15) -> tuple[list[T
     TheSportsDB a répondu, ou si aucune source n'a l'équipe) — permet à
     l'appelant de réutiliser cet ID pour le head-to-head (get_head_to_head)
     sans refaire un search_team, qui coûterait une requête rate-limitée
-    supplémentaire pour rien."""
+    supplémentaire pour rien.
+
+    Affiche systématiquement la RAISON précise d'un repli sur TheSportsDB
+    (équipe introuvable par nom / trouvée mais aucun match retourné pour la
+    saison / erreur API) — un simple "0 matchs" en sortie ne permet pas de
+    distinguer un vrai manque de données d'un nom mal orthographié ou d'un
+    nouveau bug de rate limit (voir l'historique de ce fichier : ce
+    diagnostic a déjà servi à corriger deux bugs réels de cette nature)."""
     try:
         team_ref = await search_af_team(team_name)
-        if team_ref:
+        if team_ref is None:
+            print(f"[quant_analyst] {team_name} : introuvable sur API-Football (recherche par nom) — tentative TheSportsDB.")
+        else:
             history = await get_af_team_history(team_ref.id, limit)
             if history:
                 return history, team_ref
+            print(f"[quant_analyst] {team_name} : trouvé sur API-Football (id={team_ref.id}) mais aucun match terminé pour la saison 2024 — tentative TheSportsDB.")
     except Exception as err:
-        print(f"[quant_analyst] API-Football indisponible pour {team_name} : {err}")
+        print(f"[quant_analyst] {team_name} : API-Football indisponible ({err}) — tentative TheSportsDB.")
 
     fallback = await thesportsdb.get_team_history(team_name, limit)
+    if not fallback:
+        print(f"[quant_analyst] {team_name} : TheSportsDB n'a pas non plus assez de matchs exploitables (minimum {thesportsdb.MIN_MATCHES}).")
     return fallback or [], None
 
 

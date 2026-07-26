@@ -161,3 +161,61 @@ async def test_get_head_to_head_respects_limit(monkeypatch):
 
     h2h = await football_api.get_head_to_head(541, 998, limit=1)
     assert len(h2h) == 1
+
+
+FAKE_H2H_PLAN_ERROR_RESPONSE = {"errors": {"plan": "Free plans do not have access to the Last parameter."}, "response": []}
+
+
+class _FakeAsyncClientSequence:
+    """Renvoie une réponse différente à chaque appel `.get` successif — pour
+    tester le repli sur `last=FREE_PLAN_MAX_H2H_LAST` après un premier échec
+    lié à la restriction du plan gratuit sur /fixtures/headtohead."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.call_count = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, headers=None, timeout=None):
+        response = self._responses[self.call_count]
+        self.call_count += 1
+        return response
+
+
+@pytest.mark.asyncio
+async def test_get_head_to_head_retries_with_free_plan_max_last_on_plan_error(monkeypatch):
+    fake_client = _FakeAsyncClientSequence(
+        [_FakeResponse(FAKE_H2H_PLAN_ERROR_RESPONSE), _FakeResponse(FAKE_HEAD_TO_HEAD_RESPONSE)]
+    )
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: fake_client)
+
+    h2h = await football_api.get_head_to_head(541, 998, limit=5)
+
+    assert fake_client.call_count == 2  # 1er essai (last=5) échoué, repli sur last=2 réussi
+    assert len(h2h) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_head_to_head_does_not_retry_when_limit_already_at_free_plan_max(monkeypatch):
+    fake_client = _FakeAsyncClientSequence([_FakeResponse(FAKE_H2H_PLAN_ERROR_RESPONSE)])
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: fake_client)
+
+    with pytest.raises(RuntimeError):
+        await football_api.get_head_to_head(541, 998, limit=2)
+    assert fake_client.call_count == 1  # pas de boucle infinie de repli
+
+
+@pytest.mark.asyncio
+async def test_get_head_to_head_reraises_unrelated_errors(monkeypatch):
+    unrelated_error = {"errors": {"quota": "Too many requests"}, "response": []}
+    fake_client = _FakeAsyncClientSequence([_FakeResponse(unrelated_error)])
+    monkeypatch.setattr(football_api.httpx, "AsyncClient", lambda: fake_client)
+
+    with pytest.raises(RuntimeError):
+        await football_api.get_head_to_head(541, 998, limit=5)
+    assert fake_client.call_count == 1  # pas de repli pour une erreur qui n'est pas liée au paramètre `last`

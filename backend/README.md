@@ -189,7 +189,13 @@ extensions possibles, pas encore construites.
   faire confiance — c'est ce qu'affiche `scripts/analyze_specific_matches.py`.
   Coût : 1 requête API-Football supplémentaire par affiche (le
   head-to-head), en plus des 2 par équipe déjà nécessaires pour l'historique
-  — toujours espacées de `RATE_LIMIT_SLEEP` (7s).
+  — toujours espacées de `RATE_LIMIT_SLEEP` (7s). **Limite constatée en
+  conditions réelles** : le plan gratuit refuse `/fixtures/headtohead` dès
+  que `last` dépasse 2 ("Free plans do not have access to the Last
+  parameter.") — `get_head_to_head` retente alors automatiquement avec
+  `last=2` (`FREE_PLAN_MAX_H2H_LAST`) plutôt que d'abandonner tout le
+  head-to-head ; donc au maximum 2 confrontations directes affichées sur un
+  plan gratuit, pas 5.
 
 **Pas câblé dans `orchestrator.py` par défaut** — c'est un module autonome,
 testable et utilisable indépendamment. Le brancher à la place (ou en

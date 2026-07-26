@@ -180,15 +180,35 @@ async def get_team_history(team_id: int, limit: int = 15) -> list[TeamMatchResul
     return [_map_fixture_to_team_match_result(e, team_id) for e in finished[:limit]]
 
 
+# Constaté en pratique (voir get_head_to_head ci-dessous) : le plan gratuit
+# refuse `/fixtures/headtohead` dès que `last` dépasse 2, avec l'erreur
+# "Free plans do not have access to the Last parameter." — restriction
+# distincte de celle sur `/fixtures?date=` (get_today_matches) et de celle
+# par saison (get_team_history).
+FREE_PLAN_MAX_H2H_LAST = 2
+
+
 async def get_head_to_head(team1_id: int, team2_id: int, limit: int = 5) -> list[H2HMatch]:
     """Dernières confrontations directes entre deux équipes via
     `/fixtures/headtohead` — comme get_team_history, restreint par SAISON
     (pas par la date réelle d'aujourd'hui), donc utilisable pour préparer
     l'analyse d'une affiche à venir dans plusieurs semaines/mois. Nécessite
     les deux IDs déjà résolus (voir search_team) — pas de nouvelle recherche
-    par nom ici, pour ne pas gaspiller de requêtes déjà comptées ailleurs."""
+    par nom ici, pour ne pas gaspiller de requêtes déjà comptées ailleurs.
+
+    Replie automatiquement sur FREE_PLAN_MAX_H2H_LAST si le plan gratuit
+    refuse la valeur de `limit` demandée — mieux qu'abandonner tout le
+    head-to-head pour une restriction qui ne bloque qu'une partie du
+    résultat (2 confrontations restent utiles, même si moins que les 5
+    demandées)."""
     await asyncio.sleep(RATE_LIMIT_SLEEP)
-    data = await _track_request(f"/fixtures/headtohead?h2h={team1_id}-{team2_id}&last={limit}", 1)
+    try:
+        data = await _track_request(f"/fixtures/headtohead?h2h={team1_id}-{team2_id}&last={limit}", 1)
+    except RuntimeError as err:
+        if limit <= FREE_PLAN_MAX_H2H_LAST or "last parameter" not in str(err).lower():
+            raise
+        await asyncio.sleep(RATE_LIMIT_SLEEP)
+        data = await _track_request(f"/fixtures/headtohead?h2h={team1_id}-{team2_id}&last={FREE_PLAN_MAX_H2H_LAST}", 1)
 
     finished = [e for e in data.get("response", []) if e["fixture"]["status"]["short"] in FINISHED_STATUSES]
     finished.sort(key=lambda e: e["fixture"]["date"], reverse=True)
